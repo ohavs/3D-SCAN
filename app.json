@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Pano 360",
+    "slug": "pano360",
+    "scheme": "pano360",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0B0F",
+    "newArchEnabled": true,
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "האפליקציה צריכה גישה למצלמה כדי לצלם פנורמות 360°.",
+        "NSMotionUsageDescription": "האפליקציה משתמשת בחיישני התנועה כדי לעקוב אחר כיוון הטלפון בזמן הצילום.",
+        "NSPhotoLibraryAddUsageDescription": "שמירת הפנורמה שנוצרה לגלריית התמונות."
+      }
+    },
+    "android": {
+      "package": "com.pano360.app",
+      "userInterfaceStyle": "dark",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0B0F",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.HIGH_SAMPLING_RATE_SENSORS"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "האפליקציה צריכה גישה למצלמה כדי לצלם פנורמות 360°."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "שמירת הפנורמות לגלריה.",
+          "savePhotosPermission": "שמירת הפנורמות לגלריה.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0B0F"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
