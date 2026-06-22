@@ -20,7 +20,9 @@ export const DEFAULT_CALIBRATION: FovCalibration = {
   referenceFovDeg: 66,
   mirrorX: false,
   mirrorY: false,
-  invertHorizontal: false,
+  // Most Android devices report azimuth with the sign that makes the canvas feel
+  // reversed under the three.js mapping, so invert by default. Toggle on-screen.
+  invertHorizontal: true,
 };
 
 export const MIN_FOV_DEG = 40;

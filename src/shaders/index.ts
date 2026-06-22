@@ -86,8 +86,9 @@ uniform sampler2D uAccum;
 uniform mat3 uRot;     // camera->world for the live device orientation
 uniform float uTanU;   // tan(displayFovU/2)
 uniform float uTanV;   // tan(displayFovV/2)
-uniform float uMinWeight; // below this, show live camera (transparent)
+uniform float uMinWeight; // below this, show the empty canvas colour
 uniform float uDim;       // dim painted regions slightly (0..1)
+uniform vec3 uFill;       // empty-canvas colour (dark)
 
 const float PI = 3.141592653589793;
 
@@ -103,9 +104,10 @@ void main() {
 
   vec4 acc = texture2D(uAccum, uv);
   float a = smoothstep(uMinWeight, uMinWeight + 0.25, acc.a);
-  // Premultiplied alpha: Android's TextureView composites the GL surface over the
-  // live camera assuming premultiplied colour.
-  gl_FragColor = vec4(acc.rgb * (1.0 - uDim) * a, a);
+  // Opaque canvas: painted panorama over a dark background. The live camera is a
+  // separate centred window on top of this canvas.
+  vec3 rgb = mix(uFill, acc.rgb * (1.0 - uDim), a);
+  gl_FragColor = vec4(rgb, 1.0);
 }
 `;
 

@@ -14,25 +14,17 @@ import * as Haptics from 'expo-haptics';
 import { useSession } from '../src/session/SessionContext';
 import { useOrientation } from '../src/capture/useOrientation';
 import { Compositor, CaptureRecord } from '../src/gl/Compositor';
-import {
-  ALIGN_THRESHOLD_RAD,
-  evaluateShutter,
-  nearestFromQuat,
-} from '../src/capture/autoCapture';
-import { angleBetween, cameraForward, Target } from '../src/lib/geo';
+import { ALIGN_THRESHOLD_RAD, nearestFromQuat } from '../src/capture/autoCapture';
+import { Target } from '../src/lib/geo';
 import { Quat } from '../src/lib/quaternion';
 import { ProgressRing } from '../src/ui/ProgressRing';
 import { TargetOverlay } from '../src/ui/TargetOverlay';
 import { GuideArrow } from '../src/ui/GuideArrow';
 import { colors, font, radius, spacing } from '../src/ui/theme';
 
-const CAPTURE_COOLDOWN_MS = 900;
-
-/** First target in capture order that hasn't been shot yet. */
-function firstPending(targets: Target[], done: ReadonlySet<number>): number {
-  for (let i = 0; i < targets.length; i++) if (!done.has(i)) return i;
-  return -1;
-}
+const CAPTURE_COOLDOWN_MS = 800;
+const DWELL_MS = 500; // must hold steady on a target this long before it fires
+const STEADY_SPEED = 0.5; // rad/s — "holding still enough"
 
 export default function CaptureScreen() {
   const session = useSession();
@@ -46,18 +38,20 @@ export default function CaptureScreen() {
   const [autoEnabled, setAutoEnabled] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [aligned, setAligned] = useState(false);
+  const [dwell, setDwell] = useState(0); // 0..1 hold progress
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const compositorRef = useRef<Compositor | null>(null);
-  const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
   const rafRef = useRef<number | null>(null);
   const capturingRef = useRef(false);
   const lastCaptureTs = useRef(0);
+  const alignedSince = useRef(0);
   const doneRef = useRef(session.doneSet);
   const targetsRef = useRef(session.targets);
   const autoRef = useRef(autoEnabled);
   const readyRef = useRef(false);
+  const lastDwellUi = useRef(0);
 
   doneRef.current = session.doneSet;
   targetsRef.current = session.targets;
@@ -66,12 +60,13 @@ export default function CaptureScreen() {
 
   const tanV = Math.tan((session.calibration.referenceFovDeg * Math.PI) / 180 / 2);
   const tanU = tanV * (size.width / Math.max(1, size.height));
+  const viewfinder = Math.min(size.width, size.height) * 0.66;
 
   const fireCapture = useCallback(
     async (targetIndex: number) => {
-      if (capturingRef.current || !readyRef.current) return;
+      if (capturingRef.current || !readyRef.current || targetIndex < 0) return;
       const comp = compositorRef.current;
-      if (!comp || targetIndex < 0) return;
+      if (!comp) return;
       capturingRef.current = true;
       setBusy(true);
       const rot: Quat = quatRef.current;
@@ -98,6 +93,7 @@ export default function CaptureScreen() {
         // a failed frame just won't be added
       } finally {
         lastCaptureTs.current = Date.now();
+        alignedSince.current = 0;
         capturingRef.current = false;
         setBusy(false);
       }
@@ -107,7 +103,6 @@ export default function CaptureScreen() {
 
   const onContextCreate = useCallback(
     async (gl: ExpoWebGLRenderingContext) => {
-      glRef.current = gl;
       const comp = new Compositor(gl, {
         outputWidth: session.outputSize.width,
         outputHeight: session.outputSize.height,
@@ -132,26 +127,36 @@ export default function CaptureScreen() {
 
         const targets = targetsRef.current;
         const done = doneRef.current;
-
-        // Guided current target (drives the arrow + reticle).
-        const cur = firstPending(targets, done);
-        setCurrentIndex((p) => (p === cur ? p : cur));
-        const fwd = cameraForward(quatRef.current);
-        const curAligned =
-          cur >= 0 && angleBetween(fwd, targets[cur]!.dir) <= ALIGN_THRESHOLD_RAD;
-        setAligned((p) => (p === curAligned ? p : curAligned));
-
-        // Auto-capture fires on whichever remaining target is closest + steady.
         const nearest = nearestFromQuat(quatRef.current, targets, done);
-        const decision = evaluateShutter(nearest, angularSpeedRef.current);
-        if (
-          autoRef.current &&
-          decision.shouldFire &&
-          !capturingRef.current &&
-          Date.now() - lastCaptureTs.current > CAPTURE_COOLDOWN_MS
-        ) {
-          void fireCapture(nearest.index);
+        setCurrentIndex((p) => (p === nearest.index ? p : nearest.index));
+
+        const isAligned =
+          nearest.index >= 0 && nearest.angle <= ALIGN_THRESHOLD_RAD;
+        const steady = angularSpeedRef.current <= STEADY_SPEED;
+        setAligned((p) => (p === isAligned ? p : isAligned));
+
+        // Dwell: must stay aligned + steady for DWELL_MS before auto-firing.
+        const now = Date.now();
+        let dwellFrac = 0;
+        if (isAligned && steady) {
+          if (alignedSince.current === 0) alignedSince.current = now;
+          dwellFrac = Math.min(1, (now - alignedSince.current) / DWELL_MS);
+          if (
+            autoRef.current &&
+            dwellFrac >= 1 &&
+            !capturingRef.current &&
+            now - lastCaptureTs.current > CAPTURE_COOLDOWN_MS
+          ) {
+            void fireCapture(nearest.index);
+          }
+        } else {
+          alignedSince.current = 0;
         }
+        if (now - lastDwellUi.current > 80) {
+          lastDwellUi.current = now;
+          setDwell(dwellFrac);
+        }
+
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
@@ -179,7 +184,7 @@ export default function CaptureScreen() {
       targetsRef.current,
       doneRef.current,
     );
-    void fireCapture(nearest.index >= 0 ? nearest.index : currentIndex);
+    void fireCapture(nearest.index >= 0 ? nearest.index : 0);
   };
 
   const undo = async () => {
@@ -212,28 +217,52 @@ export default function CaptureScreen() {
     });
   };
 
-  const curTarget = currentIndex >= 0 ? session.targets[currentIndex]! : null;
+  const curTarget: Target | null =
+    currentIndex >= 0 ? session.targets[currentIndex]! : null;
   const needCeiling = session.targets.some(
     (t, i) => t.kind === 'ceiling' && !session.doneSet.has(i),
   );
   const needFloor = session.targets.some(
     (t, i) => t.kind === 'floor' && !session.doneSet.has(i),
   );
-  const onPole = curTarget?.kind === 'ceiling' || curTarget?.kind === 'floor';
+
+  const ringColor = aligned
+    ? dwell >= 1
+      ? colors.success
+      : colors.warn
+    : 'rgba(255,255,255,0.9)';
 
   return (
     <View style={styles.container} onLayout={onLayout}>
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing="back"
-        onCameraReady={() => setCameraReady(true)}
-      />
-      <GLView
-        style={[StyleSheet.absoluteFill, { backgroundColor: 'transparent' }]}
-        onContextCreate={onContextCreate}
-        pointerEvents="none"
-      />
+      {/* Dark canvas: the panorama being built, world-fixed */}
+      <GLView style={StyleSheet.absoluteFill} onContextCreate={onContextCreate} />
+
+      {/* Live camera viewfinder window, centred on the canvas */}
+      <View pointerEvents="none" style={styles.center}>
+        <View
+          style={[
+            styles.viewfinder,
+            {
+              width: viewfinder,
+              height: viewfinder,
+              borderRadius: viewfinder / 2,
+              borderColor: ringColor,
+            },
+          ]}
+        >
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            onCameraReady={() => setCameraReady(true)}
+          />
+          {aligned && dwell < 1 && (
+            <View style={styles.dwellLabel}>
+              <Text style={styles.dwellText}>החזק יציב…</Text>
+            </View>
+          )}
+        </View>
+      </View>
 
       <TargetOverlay
         targets={session.targets}
@@ -248,27 +277,12 @@ export default function CaptureScreen() {
 
       <GuideArrow target={curTarget} viewQuat={uiQuat} aligned={aligned} />
 
-      <View pointerEvents="none" style={styles.center}>
-        <View
-          style={[
-            styles.reticle,
-            { borderColor: aligned ? colors.success : 'rgba(255,255,255,0.85)' },
-          ]}
-        />
-      </View>
-
       <SafeAreaView style={styles.ui} pointerEvents="box-none">
         <View style={styles.topBar} pointerEvents="box-none">
           <ProgressRing progress={session.coverage} />
           <View style={styles.reminders}>
-            {onPole && curTarget?.kind === 'ceiling' && (
-              <Hint text="כוון למעלה — צלם את התקרה" />
-            )}
-            {onPole && curTarget?.kind === 'floor' && (
-              <Hint text="כוון למטה — צלם את הרצפה" />
-            )}
-            {!onPole && needCeiling && !needFloor && <Hint text="נשארה התקרה" />}
-            {!onPole && needFloor && !needCeiling && <Hint text="נשארה הרצפה" />}
+            {needCeiling && <Hint text="צלם גם את התקרה ⤴" />}
+            {needFloor && <Hint text="צלם גם את הרצפה ⤵" />}
             {!needCeiling && !needFloor && session.coverage > 0.85 && (
               <Hint text="כיסוי כמעט מלא — אפשר לסיים" tone="success" />
             )}
@@ -374,12 +388,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  reticle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    borderWidth: 2,
+  viewfinder: {
+    overflow: 'hidden',
+    borderWidth: 4,
+    backgroundColor: '#000',
   },
+  dwellLabel: {
+    position: 'absolute',
+    bottom: 12,
+    alignSelf: 'center',
+    backgroundColor: colors.overlay,
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  dwellText: { color: '#fff', fontSize: font.small, fontWeight: '700' },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.md },
   topBar: {
     flexDirection: 'row-reverse',

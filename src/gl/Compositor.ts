@@ -213,9 +213,9 @@ export class Compositor {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, screenWidth, screenHeight);
-    gl.clearColor(0, 0, 0, 0);
+    gl.clearColor(FILL_COLOR[0], FILL_COLOR[1], FILL_COLOR[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    // Single fullscreen pass writing premultiplied colour; no GL blending needed.
+    // Single fullscreen pass; opaque dark canvas, no GL blending needed.
     gl.disable(gl.BLEND);
 
     gl.useProgram(this.displayProgram);
@@ -235,6 +235,12 @@ export class Compositor {
       minWeight,
     );
     gl.uniform1f(gl.getUniformLocation(this.displayProgram, 'uDim'), dim);
+    gl.uniform3f(
+      gl.getUniformLocation(this.displayProgram, 'uFill'),
+      FILL_COLOR[0],
+      FILL_COLOR[1],
+      FILL_COLOR[2],
+    );
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
