@@ -15,16 +15,14 @@ import { useSession } from '../src/session/SessionContext';
 import { useOrientation } from '../src/capture/useOrientation';
 import { Compositor, CaptureRecord } from '../src/gl/Compositor';
 import { ALIGN_THRESHOLD_RAD, nearestFromQuat } from '../src/capture/autoCapture';
-import { Target } from '../src/lib/geo';
 import { Quat } from '../src/lib/quaternion';
 import { ProgressRing } from '../src/ui/ProgressRing';
-import { TargetOverlay } from '../src/ui/TargetOverlay';
-import { GuideArrow } from '../src/ui/GuideArrow';
+import { PanoGuide } from '../src/ui/PanoGuide';
 import { colors, font, radius, spacing } from '../src/ui/theme';
 
 const CAPTURE_COOLDOWN_MS = 800;
-const DWELL_MS = 500; // must hold steady on a target this long before it fires
-const STEADY_SPEED = 0.5; // rad/s — "holding still enough"
+const DWELL_MS = 450; // hold steady on a target this long before auto-firing
+const STEADY_SPEED = 0.6; // rad/s — "holding still enough"
 
 export default function CaptureScreen() {
   const session = useSession();
@@ -36,9 +34,8 @@ export default function CaptureScreen() {
 
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [autoEnabled, setAutoEnabled] = useState(true);
-  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [nearestIndex, setNearestIndex] = useState(-1);
   const [aligned, setAligned] = useState(false);
-  const [dwell, setDwell] = useState(0); // 0..1 hold progress
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -51,7 +48,6 @@ export default function CaptureScreen() {
   const targetsRef = useRef(session.targets);
   const autoRef = useRef(autoEnabled);
   const readyRef = useRef(false);
-  const lastDwellUi = useRef(0);
 
   doneRef.current = session.doneSet;
   targetsRef.current = session.targets;
@@ -60,7 +56,6 @@ export default function CaptureScreen() {
 
   const tanV = Math.tan((session.calibration.referenceFovDeg * Math.PI) / 180 / 2);
   const tanU = tanV * (size.width / Math.max(1, size.height));
-  const viewfinder = Math.min(size.width, size.height) * 0.66;
 
   const fireCapture = useCallback(
     async (targetIndex: number) => {
@@ -101,6 +96,8 @@ export default function CaptureScreen() {
     [session, quatRef],
   );
 
+  // The GL context exists only to accumulate captures + export; it sits behind the
+  // opaque camera and is never displayed. The auto-capture loop runs here too.
   const onContextCreate = useCallback(
     async (gl: ExpoWebGLRenderingContext) => {
       const comp = new Compositor(gl, {
@@ -114,36 +111,23 @@ export default function CaptureScreen() {
       }
       compositorRef.current = comp;
 
-      const dbW = gl.drawingBufferWidth;
-      const dbH = gl.drawingBufferHeight;
-      const dTanV = tanV;
-      const dTanU = dTanV * (dbW / Math.max(1, dbH));
-
       const loop = () => {
-        const c = compositorRef.current;
-        if (!c) return;
-        c.renderDisplay(quatRef.current, dTanU, dTanV, dbW, dbH);
-        gl.endFrameEXP();
-
         const targets = targetsRef.current;
         const done = doneRef.current;
         const nearest = nearestFromQuat(quatRef.current, targets, done);
-        setCurrentIndex((p) => (p === nearest.index ? p : nearest.index));
+        setNearestIndex((p) => (p === nearest.index ? p : nearest.index));
 
         const isAligned =
           nearest.index >= 0 && nearest.angle <= ALIGN_THRESHOLD_RAD;
         const steady = angularSpeedRef.current <= STEADY_SPEED;
         setAligned((p) => (p === isAligned ? p : isAligned));
 
-        // Dwell: must stay aligned + steady for DWELL_MS before auto-firing.
         const now = Date.now();
-        let dwellFrac = 0;
         if (isAligned && steady) {
           if (alignedSince.current === 0) alignedSince.current = now;
-          dwellFrac = Math.min(1, (now - alignedSince.current) / DWELL_MS);
           if (
             autoRef.current &&
-            dwellFrac >= 1 &&
+            now - alignedSince.current >= DWELL_MS &&
             !capturingRef.current &&
             now - lastCaptureTs.current > CAPTURE_COOLDOWN_MS
           ) {
@@ -151,10 +135,6 @@ export default function CaptureScreen() {
           }
         } else {
           alignedSince.current = 0;
-        }
-        if (now - lastDwellUi.current > 80) {
-          lastDwellUi.current = now;
-          setDwell(dwellFrac);
         }
 
         rafRef.current = requestAnimationFrame(loop);
@@ -217,76 +197,33 @@ export default function CaptureScreen() {
     });
   };
 
-  const curTarget: Target | null =
-    currentIndex >= 0 ? session.targets[currentIndex]! : null;
-  const needCeiling = session.targets.some(
-    (t, i) => t.kind === 'ceiling' && !session.doneSet.has(i),
-  );
-  const needFloor = session.targets.some(
-    (t, i) => t.kind === 'floor' && !session.doneSet.has(i),
-  );
-
-  const ringColor = aligned
-    ? dwell >= 1
-      ? colors.success
-      : colors.warn
-    : 'rgba(255,255,255,0.9)';
-
   return (
     <View style={styles.container} onLayout={onLayout}>
-      {/* Dark canvas: the panorama being built, world-fixed */}
+      {/* Hidden GL context (behind the camera) for accumulation + export */}
       <GLView style={StyleSheet.absoluteFill} onContextCreate={onContextCreate} />
+      {/* Fullscreen live camera */}
+      <CameraView
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        facing="back"
+        onCameraReady={() => setCameraReady(true)}
+      />
 
-      {/* Live camera viewfinder window, centred on the canvas */}
-      <View pointerEvents="none" style={styles.center}>
-        <View
-          style={[
-            styles.viewfinder,
-            {
-              width: viewfinder,
-              height: viewfinder,
-              borderRadius: viewfinder / 2,
-              borderColor: ringColor,
-            },
-          ]}
-        >
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            onCameraReady={() => setCameraReady(true)}
-          />
-          {aligned && dwell < 1 && (
-            <View style={styles.dwellLabel}>
-              <Text style={styles.dwellText}>החזק יציב…</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      <TargetOverlay
+      <PanoGuide
         targets={session.targets}
         done={session.doneSet}
-        currentIndex={currentIndex}
+        nearestIndex={nearestIndex}
         viewQuat={uiQuat}
         tanU={tanU}
         tanV={tanV}
         width={size.width}
         height={size.height}
+        aligned={aligned}
       />
-
-      <GuideArrow target={curTarget} viewQuat={uiQuat} aligned={aligned} />
 
       <SafeAreaView style={styles.ui} pointerEvents="box-none">
         <View style={styles.topBar} pointerEvents="box-none">
           <ProgressRing progress={session.coverage} />
-          <View style={styles.reminders}>
-            {needCeiling && <Hint text="צלם גם את התקרה ⤴" />}
-            {needFloor && <Hint text="צלם גם את הרצפה ⤵" />}
-            {!needCeiling && !needFloor && session.coverage > 0.85 && (
-              <Hint text="כיסוי כמעט מלא — אפשר לסיים" tone="success" />
-            )}
-          </View>
           <Pressable onPress={toggleInvert} style={styles.invertBtn}>
             <Text style={styles.invertText}>
               סיבוב{'\n'}
@@ -332,19 +269,6 @@ export default function CaptureScreen() {
   );
 }
 
-function Hint({ text, tone }: { text: string; tone?: 'success' }) {
-  return (
-    <View
-      style={[
-        styles.hint,
-        tone === 'success' && { backgroundColor: 'rgba(34,197,94,0.25)' },
-      ]}
-    >
-      <Text style={styles.hintText}>{text}</Text>
-    </View>
-  );
-}
-
 function RoundBtn({
   label,
   onPress,
@@ -379,45 +303,12 @@ function RoundBtn({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  center: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  viewfinder: {
-    overflow: 'hidden',
-    borderWidth: 4,
-    backgroundColor: '#000',
-  },
-  dwellLabel: {
-    position: 'absolute',
-    bottom: 12,
-    alignSelf: 'center',
-    backgroundColor: colors.overlay,
-    borderRadius: radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  dwellText: { color: '#fff', fontSize: font.small, fontWeight: '700' },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.md },
   topBar: {
     flexDirection: 'row-reverse',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: spacing.sm,
   },
-  reminders: { flex: 1, alignItems: 'center', gap: spacing.xs },
-  hint: {
-    backgroundColor: colors.overlay,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  hintText: { color: colors.text, fontSize: font.small, fontWeight: '700' },
   invertBtn: {
     backgroundColor: colors.overlay,
     borderRadius: radius.md,

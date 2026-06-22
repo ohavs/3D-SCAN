@@ -13,7 +13,7 @@ import { IDENTITY_QUAT, Quat, quatAngle, quatSlerp } from '../lib/quaternion';
 import { applyOffset, deviceQuaternion } from '../lib/orientation';
 
 const UPDATE_INTERVAL_MS = 1000 / 60;
-const SMOOTHING = 0.35; // slerp factor toward the latest reading
+const SMOOTHING = 0.25; // slerp factor toward the latest reading (lower = smoother)
 const UI_THROTTLE_MS = 60;
 
 export interface OrientationApi {

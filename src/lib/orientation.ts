@@ -1,69 +1,68 @@
 /**
- * Convert Expo DeviceMotion readings into a stable camera->world quaternion.
+ * Convert Expo DeviceMotion readings into a STABLE camera->world quaternion.
  *
- * This is a direct port of three.js' DeviceOrientationControls math, which is the
- * battle-tested mapping from the W3C deviceorientation (alpha/beta/gamma) angles
- * plus screen orientation to a camera quaternion. The resulting quaternion orients
- * a camera that looks down its local -Z axis (three.js convention) — exactly the
- * frame the accumulation shader expects.
+ * Why not the three.js DeviceOrientationControls Euler formula? Expo's
+ * `DeviceMotion.rotation` already comes from Android `SensorManager.getOrientation`,
+ * i.e. Euler angles derived from the rotation-vector matrix:
+ *     alpha = -azimuth(Z),  beta = -pitch(X),  gamma = roll(Y)   (radians)
+ * Re-feeding those Euler angles through another Euler formula re-introduces gimbal
+ * lock — the orientation snaps/jumps when the phone tilts toward the zenith/nadir
+ * (exactly the ceiling/floor shots). Instead we reconstruct the original rotation
+ * MATRIX and turn it into a quaternion, which is continuous everywhere.
  *
- * Expo DeviceMotion notes:
- *  - `rotation.{alpha,beta,gamma}` are in radians.
- *  - `orientation` is the screen rotation in degrees (0, 90, 180, -90).
+ * Deriving the matrix: Android's getOrientation is the decomposition of
+ *     R_device->world(ENU) = Rz(-azimuth) · Rx(-pitch) · Ry(roll)
+ *                          = Rz(alpha) · Rx(beta) · Ry(gamma)
+ * (verified against the AOSP getOrientation element formulas). ENU = X:east,
+ * Y:north, Z:up. We then remap ENU to our Y-up world (Y:up, Z:front) with a fixed
+ * rotation Q_WE, and the back camera shares the device axes (it looks down -Z, like
+ * our camera convention), so camera->device is identity.
  */
 
 import {
   IDENTITY_QUAT,
   Quat,
   quatFromAxisAngle,
-  quatFromEuler,
   quatMultiply,
   quatNormalize,
 } from './quaternion';
 import { cameraForward } from './geo';
 
-const DEG = Math.PI / 180;
-const HALF_SQRT2 = Math.sqrt(0.5);
-// -90° about X: re-points "looking at the screen" to "looking out the back camera".
-const Q_BACK_CAMERA: Quat = [-HALF_SQRT2, 0, 0, HALF_SQRT2];
-const ZEE: [number, number, number] = [0, 0, 1];
+const S = Math.SQRT1_2;
+// ENU (east,north,up) -> our world (Y up, Z front): 180° about (0,1,1)/√2.
+const Q_WORLD_FROM_ENU: Quat = [0, S, S, 0];
+const AXIS_Z: [number, number, number] = [0, 0, 1];
+const AXIS_X: [number, number, number] = [1, 0, 0];
+const AXIS_Y: [number, number, number] = [0, 1, 0];
 
 export interface DeviceRotation {
-  alpha: number; // radians
-  beta: number; // radians
-  gamma: number; // radians
-  orientation: number; // degrees: 0 | 90 | 180 | -90
+  alpha: number; // radians (azimuth)
+  beta: number; // radians (pitch)
+  gamma: number; // radians (roll)
+  orientation: number; // degrees: 0 | 90 | 180 | -90 (screen rotation)
 }
 
-/**
- * Map a raw DeviceMotion reading to a camera->world quaternion.
- *
- * `invertHorizontal` reverses the yaw sense. Some devices/conventions report the
- * azimuth (alpha) with the opposite sign, which makes the whole panorama feel like
- * it rotates the wrong way; flipping alpha corrects it without affecting pitch.
- */
+/** Map a raw DeviceMotion reading to a stable camera->world quaternion. */
 export function deviceQuaternion(r: DeviceRotation, invertHorizontal = false): Quat {
-  const { alpha, beta, gamma, orientation } = r;
-  const a = invertHorizontal ? -alpha : alpha;
-  // three.js: euler.set(beta, alpha, -gamma, 'YXZ')
-  let q = quatFromEuler(beta, a, -gamma, 'YXZ');
-  q = quatMultiply(q, Q_BACK_CAMERA);
-  // Compensate for the current screen rotation.
-  const orient = orientation * DEG;
-  q = quatMultiply(q, quatFromAxisAngle(ZEE, invertHorizontal ? orient : -orient));
-  return quatNormalize(q);
+  const alpha = invertHorizontal ? -r.alpha : r.alpha;
+  // q_device->world(ENU) = Rz(alpha) · Rx(beta) · Ry(gamma)
+  const qEnu = quatMultiply(
+    quatMultiply(quatFromAxisAngle(AXIS_Z, alpha), quatFromAxisAngle(AXIS_X, r.beta)),
+    quatFromAxisAngle(AXIS_Y, r.gamma),
+  );
+  // camera->our world (camera shares device axes; screen is locked portrait).
+  return quatNormalize(quatMultiply(Q_WORLD_FROM_ENU, qEnu));
 }
 
 /**
  * Heading-zero calibration: returns a world-space correction quaternion that, when
  * pre-multiplied (`qCalib * qDevice`), rotates the currently-faced direction to
- * lon=0 (the panorama's "front"). Pitch/roll are left to the fused gravity sensor,
- * which already levels the horizon.
+ * lon=0 (the panorama's "front"). Pitch/roll are left to the fused gravity sensor.
  */
 export function headingOffset(qDevice: Quat): Quat {
   const f = cameraForward(qDevice);
   const lon = Math.atan2(f[0], f[2]);
-  return quatFromAxisAngle([0, 1, 0], -lon);
+  return quatFromAxisAngle(AXIS_Y, -lon);
 }
 
 export const NO_OFFSET: Quat = IDENTITY_QUAT;
