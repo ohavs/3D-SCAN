@@ -19,43 +19,51 @@ import {
   evaluateShutter,
   nearestFromQuat,
 } from '../src/capture/autoCapture';
-import { cameraForward } from '../src/lib/geo';
+import { angleBetween, cameraForward, Target } from '../src/lib/geo';
 import { Quat } from '../src/lib/quaternion';
 import { ProgressRing } from '../src/ui/ProgressRing';
 import { TargetOverlay } from '../src/ui/TargetOverlay';
+import { GuideArrow } from '../src/ui/GuideArrow';
 import { colors, font, radius, spacing } from '../src/ui/theme';
 
 const CAPTURE_COOLDOWN_MS = 900;
+
+/** First target in capture order that hasn't been shot yet. */
+function firstPending(targets: Target[], done: ReadonlySet<number>): number {
+  for (let i = 0; i < targets.length; i++) if (!done.has(i)) return i;
+  return -1;
+}
 
 export default function CaptureScreen() {
   const session = useSession();
   const { quatRef, angularSpeedRef, uiQuat } = useOrientation(
     session.headingOffset,
+    session.calibration.invertHorizontal,
   );
   const cameraRef = useRef<CameraView>(null);
 
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [autoEnabled, setAutoEnabled] = useState(true);
-  const [nearestIndex, setNearestIndex] = useState(-1);
+  const [currentIndex, setCurrentIndex] = useState(-1);
   const [aligned, setAligned] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Refs the GL/auto loop reads without re-subscribing.
   const compositorRef = useRef<Compositor | null>(null);
   const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
   const rafRef = useRef<number | null>(null);
   const capturingRef = useRef(false);
   const lastCaptureTs = useRef(0);
   const doneRef = useRef(session.doneSet);
+  const targetsRef = useRef(session.targets);
   const autoRef = useRef(autoEnabled);
   const readyRef = useRef(false);
 
   doneRef.current = session.doneSet;
+  targetsRef.current = session.targets;
   autoRef.current = autoEnabled;
   readyRef.current = cameraReady;
 
-  // Vertical FOV (portrait) ~ reference FOV; horizontal derived from aspect.
   const tanV = Math.tan((session.calibration.referenceFovDeg * Math.PI) / 180 / 2);
   const tanU = tanV * (size.width / Math.max(1, size.height));
 
@@ -63,10 +71,10 @@ export default function CaptureScreen() {
     async (targetIndex: number) => {
       if (capturingRef.current || !readyRef.current) return;
       const comp = compositorRef.current;
-      if (!comp) return;
+      if (!comp || targetIndex < 0) return;
       capturingRef.current = true;
       setBusy(true);
-      const rot: Quat = quatRef.current; // orientation at the instant of shutter
+      const rot: Quat = quatRef.current;
       try {
         const photo = await cameraRef.current?.takePictureAsync({
           quality: 0.85,
@@ -87,7 +95,7 @@ export default function CaptureScreen() {
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         }
       } catch {
-        // swallow — a failed frame just won't be added
+        // a failed frame just won't be added
       } finally {
         lastCaptureTs.current = Date.now();
         capturingRef.current = false;
@@ -105,7 +113,6 @@ export default function CaptureScreen() {
         outputHeight: session.outputSize.height,
       });
       comp.init();
-      // Replay any captures from a previous visit so the panorama is restored.
       for (const entry of session.captures) {
         // eslint-disable-next-line no-await-in-loop
         await comp.addCaptureAsync(entry.record);
@@ -123,13 +130,20 @@ export default function CaptureScreen() {
         c.renderDisplay(quatRef.current, dTanU, dTanV, dbW, dbH);
         gl.endFrameEXP();
 
-        // Auto-capture evaluation.
-        const fwd = cameraForward(quatRef.current);
-        const nearest = nearestFromQuat(quatRef.current, session.targets, doneRef.current);
-        const decision = evaluateShutter(nearest, angularSpeedRef.current);
-        setNearestIndex((prev) => (prev === nearest.index ? prev : nearest.index));
-        setAligned((prev) => (prev === decision.aligned ? prev : decision.aligned));
+        const targets = targetsRef.current;
+        const done = doneRef.current;
 
+        // Guided current target (drives the arrow + reticle).
+        const cur = firstPending(targets, done);
+        setCurrentIndex((p) => (p === cur ? p : cur));
+        const fwd = cameraForward(quatRef.current);
+        const curAligned =
+          cur >= 0 && angleBetween(fwd, targets[cur]!.dir) <= ALIGN_THRESHOLD_RAD;
+        setAligned((p) => (p === curAligned ? p : curAligned));
+
+        // Auto-capture fires on whichever remaining target is closest + steady.
+        const nearest = nearestFromQuat(quatRef.current, targets, done);
+        const decision = evaluateShutter(nearest, angularSpeedRef.current);
         if (
           autoRef.current &&
           decision.shouldFire &&
@@ -138,7 +152,6 @@ export default function CaptureScreen() {
         ) {
           void fireCapture(nearest.index);
         }
-        void fwd;
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
@@ -161,8 +174,12 @@ export default function CaptureScreen() {
   };
 
   const manualShutter = () => {
-    const nearest = nearestFromQuat(quatRef.current, session.targets, doneRef.current);
-    void fireCapture(nearest.index >= 0 ? nearest.index : 0);
+    const nearest = nearestFromQuat(
+      quatRef.current,
+      targetsRef.current,
+      doneRef.current,
+    );
+    void fireCapture(nearest.index >= 0 ? nearest.index : currentIndex);
   };
 
   const undo = async () => {
@@ -188,8 +205,21 @@ export default function CaptureScreen() {
     }
   };
 
-  const needCeiling = !hasLatitudeDone(session, 1);
-  const needFloor = !hasLatitudeDone(session, -1);
+  const toggleInvert = () => {
+    session.setCalibration({
+      ...session.calibration,
+      invertHorizontal: !session.calibration.invertHorizontal,
+    });
+  };
+
+  const curTarget = currentIndex >= 0 ? session.targets[currentIndex]! : null;
+  const needCeiling = session.targets.some(
+    (t, i) => t.kind === 'ceiling' && !session.doneSet.has(i),
+  );
+  const needFloor = session.targets.some(
+    (t, i) => t.kind === 'floor' && !session.doneSet.has(i),
+  );
+  const onPole = curTarget?.kind === 'ceiling' || curTarget?.kind === 'floor';
 
   return (
     <View style={styles.container} onLayout={onLayout}>
@@ -208,7 +238,7 @@ export default function CaptureScreen() {
       <TargetOverlay
         targets={session.targets}
         done={session.doneSet}
-        nearestIndex={nearestIndex}
+        currentIndex={currentIndex}
         viewQuat={uiQuat}
         tanU={tanU}
         tanV={tanV}
@@ -216,7 +246,8 @@ export default function CaptureScreen() {
         height={size.height}
       />
 
-      {/* Center reticle */}
+      <GuideArrow target={curTarget} viewQuat={uiQuat} aligned={aligned} />
+
       <View pointerEvents="none" style={styles.center}>
         <View
           style={[
@@ -230,12 +261,24 @@ export default function CaptureScreen() {
         <View style={styles.topBar} pointerEvents="box-none">
           <ProgressRing progress={session.coverage} />
           <View style={styles.reminders}>
-            {needCeiling && <Hint text="צלם את התקרה ⤴" />}
-            {needFloor && <Hint text="צלם את הרצפה ⤵" />}
+            {onPole && curTarget?.kind === 'ceiling' && (
+              <Hint text="כוון למעלה — צלם את התקרה" />
+            )}
+            {onPole && curTarget?.kind === 'floor' && (
+              <Hint text="כוון למטה — צלם את הרצפה" />
+            )}
+            {!onPole && needCeiling && !needFloor && <Hint text="נשארה התקרה" />}
+            {!onPole && needFloor && !needCeiling && <Hint text="נשארה הרצפה" />}
             {!needCeiling && !needFloor && session.coverage > 0.85 && (
               <Hint text="כיסוי כמעט מלא — אפשר לסיים" tone="success" />
             )}
           </View>
+          <Pressable onPress={toggleInvert} style={styles.invertBtn}>
+            <Text style={styles.invertText}>
+              סיבוב{'\n'}
+              {session.calibration.invertHorizontal ? 'הפוך' : 'רגיל'}
+            </Text>
+          </Pressable>
         </View>
 
         <View style={styles.bottomBar} pointerEvents="box-none">
@@ -273,17 +316,6 @@ export default function CaptureScreen() {
       </SafeAreaView>
     </View>
   );
-}
-
-function hasLatitudeDone(
-  session: ReturnType<typeof useSession>,
-  sign: 1 | -1,
-): boolean {
-  // The pole targets are the last two pushed (ceiling then floor).
-  const n = session.targets.length;
-  const ceilingIdx = n - 2;
-  const floorIdx = n - 1;
-  return session.doneSet.has(sign === 1 ? ceilingIdx : floorIdx);
 }
 
 function Hint({ text, tone }: { text: string; tone?: 'success' }) {
@@ -353,9 +385,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row-reverse',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: spacing.md,
+    gap: spacing.sm,
   },
-  reminders: { flex: 1, alignItems: 'flex-start', gap: spacing.xs },
+  reminders: { flex: 1, alignItems: 'center', gap: spacing.xs },
   hint: {
     backgroundColor: colors.overlay,
     borderRadius: radius.pill,
@@ -363,6 +395,20 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   hintText: { color: colors.text, fontSize: font.small, fontWeight: '700' },
+  invertBtn: {
+    backgroundColor: colors.overlay,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  invertText: {
+    color: colors.text,
+    fontSize: font.small - 1,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   bottomBar: {
     flexDirection: 'row-reverse',
     alignItems: 'center',

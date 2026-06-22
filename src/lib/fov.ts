@@ -12,12 +12,15 @@ export interface FovCalibration {
   mirrorX: boolean;
   /** Mirror the sampled photo vertically. */
   mirrorY: boolean;
+  /** Reverse the horizontal (yaw) rotation sense if it feels inverted on device. */
+  invertHorizontal: boolean;
 }
 
 export const DEFAULT_CALIBRATION: FovCalibration = {
   referenceFovDeg: 66,
   mirrorX: false,
   mirrorY: false,
+  invertHorizontal: false,
 };
 
 export const MIN_FOV_DEG = 40;

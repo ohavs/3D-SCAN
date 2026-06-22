@@ -7,7 +7,7 @@ import { colors } from './theme';
 interface Props {
   targets: Target[];
   done: ReadonlySet<number>;
-  nearestIndex: number;
+  currentIndex: number; // the next target to capture (guided)
   viewQuat: Quat; // camera->world
   tanU: number;
   tanV: number;
@@ -20,18 +20,18 @@ interface Projected {
   x: number;
   y: number;
   done: boolean;
-  active: boolean;
+  current: boolean;
 }
 
 /**
- * Projects every target onto the screen using the same camera model as the display
- * shader, so the dots sit exactly where the painted panorama meets the live feed.
- * Targets behind the camera are skipped.
+ * Projects targets onto the screen using the same camera model as the display
+ * shader. To avoid clutter we only draw: the current target (big, pulsing), any
+ * completed targets near the view (small green), and a few faint pending dots.
  */
 export function TargetOverlay({
   targets,
   done,
-  nearestIndex,
+  currentIndex,
   viewQuat,
   tanU,
   tanV,
@@ -42,27 +42,27 @@ export function TargetOverlay({
   const dots: Projected[] = [];
 
   for (let i = 0; i < targets.length; i++) {
+    const isCurrent = i === currentIndex;
+    const isDone = done.has(i);
     const dc = quatRotateVec3(inv, targets[i]!.dir);
     const depth = -dc[2]; // camera looks down -Z
     if (depth <= 0.05) continue; // behind camera
     const ndcX = dc[0] / depth / tanU;
     const ndcY = dc[1] / depth / tanV;
-    if (Math.abs(ndcX) > 1.6 || Math.abs(ndcY) > 1.6) continue; // well offscreen
-    const x = (ndcX * 0.5 + 0.5) * width;
-    const y = (0.5 - ndcY * 0.5) * height;
+    if (Math.abs(ndcX) > 1.3 || Math.abs(ndcY) > 1.3) continue; // offscreen
     dots.push({
       index: i,
-      x,
-      y,
-      done: done.has(i),
-      active: i === nearestIndex,
+      x: (ndcX * 0.5 + 0.5) * width,
+      y: (0.5 - ndcY * 0.5) * height,
+      done: isDone,
+      current: isCurrent,
     });
   }
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       {dots.map((d) => {
-        const size = d.active ? 30 : d.done ? 16 : 22;
+        const size = d.current ? 44 : d.done ? 14 : 10;
         return (
           <View
             key={d.index}
@@ -76,19 +76,19 @@ export function TargetOverlay({
                 borderRadius: size / 2,
                 backgroundColor: d.done
                   ? colors.success
-                  : d.active
+                  : d.current
                     ? colors.accentSoft
                     : 'transparent',
                 borderColor: d.done
                   ? colors.success
-                  : d.active
+                  : d.current
                     ? colors.accent
-                    : 'rgba(255,255,255,0.7)',
-                borderWidth: d.active ? 3 : 2,
+                    : 'rgba(255,255,255,0.4)',
+                borderWidth: d.current ? 3 : d.done ? 0 : 1.5,
               },
             ]}
           >
-            {d.active && <View style={styles.activeCore} />}
+            {d.current && <View style={styles.currentCore} />}
           </View>
         );
       })}
@@ -102,10 +102,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  activeCore: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  currentCore: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: colors.accent,
   },
 });

@@ -33,7 +33,9 @@ function Row({ title, desc, status }: { title: string; desc: string; status: Sta
 
 export default function PermissionsScreen() {
   const [camPerm, requestCam] = useCameraPermissions();
-  const [mediaPerm, requestMedia] = MediaLibrary.usePermissions();
+  const [mediaPerm, requestMedia] = MediaLibrary.usePermissions({
+    writeOnly: true,
+  });
   const [motion, setMotion] = useState<Status>('unknown');
   const [busy, setBusy] = useState(false);
 

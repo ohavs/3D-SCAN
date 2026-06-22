@@ -13,7 +13,10 @@ import { OUTPUT_SIZES, useSession } from '../src/session/SessionContext';
 
 export default function CalibrateScreen() {
   const session = useSession();
-  const { rawQuatRef, uiQuat } = useOrientation(session.headingOffset);
+  const { rawQuatRef, uiQuat } = useOrientation(
+    session.headingOffset,
+    session.calibration.invertHorizontal,
+  );
 
   const fwd = cameraForward(uiQuat);
   const up = cameraUp(uiQuat);

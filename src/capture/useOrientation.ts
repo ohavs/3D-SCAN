@@ -30,20 +30,23 @@ export interface OrientationApi {
 
 export function useOrientation(
   offset: Quat | null,
+  invertHorizontal = false,
   enabled = true,
 ): OrientationApi {
   const quatRef = useRef<Quat>(IDENTITY_QUAT);
   const rawQuatRef = useRef<Quat>(IDENTITY_QUAT);
   const angularSpeedRef = useRef<number>(0);
   const offsetRef = useRef<Quat | null>(offset);
+  const invertRef = useRef<boolean>(invertHorizontal);
   const lastRaw = useRef<Quat>(IDENTITY_QUAT);
   const lastTs = useRef<number>(0);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [uiQuat, setUiQuat] = useState<Quat>(IDENTITY_QUAT);
   const lastUi = useRef(0);
 
-  // Keep the offset ref in sync without re-subscribing the sensor.
+  // Keep refs in sync without re-subscribing the sensor.
   offsetRef.current = offset;
+  invertRef.current = invertHorizontal;
 
   useEffect(() => {
     if (!enabled) return;
@@ -65,12 +68,15 @@ export function useOrientation(
     const sub = DeviceMotion.addListener((data) => {
       if (!data?.rotation) return;
       const { alpha, beta, gamma } = data.rotation;
-      const raw = deviceQuaternion({
-        alpha,
-        beta,
-        gamma,
-        orientation: data.orientation ?? 0,
-      });
+      const raw = deviceQuaternion(
+        {
+          alpha,
+          beta,
+          gamma,
+          orientation: data.orientation ?? 0,
+        },
+        invertRef.current,
+      );
       rawQuatRef.current = raw;
 
       const now = Date.now();

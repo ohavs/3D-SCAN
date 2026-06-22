@@ -12,10 +12,13 @@ import { Quat, quatRotateVec3, Vec3 } from './quaternion';
 
 export const DEG = Math.PI / 180;
 
+export type TargetKind = 'ring' | 'ceiling' | 'floor';
+
 export interface Target {
   readonly lon: number; // radians, [-PI, PI]
   readonly lat: number; // radians, [-PI/2, PI/2]
   readonly dir: Vec3; // unit world-space direction
+  readonly kind: TargetKind;
 }
 
 export function lonLatToDir(lon: number, lat: number): Vec3 {
@@ -40,39 +43,60 @@ export function cameraUp(q: Quat): Vec3 {
 }
 
 /**
- * Generate capture targets spanning the whole sphere. Targets are laid out in
- * latitude rings sized so neighbouring shots overlap by `overlap` (0..1) in both
- * axes — overlap is what makes feather-blending seamless. Zenith and nadir get a
- * single target each (the ceiling / floor shots).
+ * Generate capture targets spanning the whole sphere, in a guided capture *order*:
+ * the horizon ring first (sweeping around from the front), then the ring above,
+ * the ring below, then progressively higher/lower rings, and finally the ceiling
+ * and floor. The UI guides the user to these one at a time, so the sequence is
+ * what makes capture feel organised rather than scattered.
+ *
+ * `overlap` (0..1) controls how much neighbouring shots overlap — overlap is what
+ * makes feather-blending seamless and the auto-capture reachable.
  */
 export function generateTargets(
   hfovDeg: number,
   vfovDeg: number,
-  overlap = 0.4,
+  overlap = 0.35,
 ): Target[] {
   const targets: Target[] = [];
   const latStep = vfovDeg * (1 - overlap) * DEG;
   const maxRingLat = (90 - vfovDeg * 0.5) * DEG;
 
-  // Number of rings between the poles (symmetric around the equator).
-  const ringCount = Math.max(1, Math.round((2 * maxRingLat) / latStep));
-  for (let i = 0; i <= ringCount; i++) {
-    const lat = -maxRingLat + (i / ringCount) * (2 * maxRingLat);
-    // Longitudinal spacing grows toward the poles (divide by cos lat).
+  // Ring latitudes in capture order: equator, +1, -1, +2, -2, ...
+  const ringLats: number[] = [0];
+  for (let k = 1; k * latStep <= maxRingLat + 1e-3; k++) {
+    ringLats.push(k * latStep, -k * latStep);
+  }
+
+  for (const lat of ringLats) {
     const cosLat = Math.max(0.15, Math.cos(lat));
     const lonStep = (hfovDeg * (1 - overlap) * DEG) / cosLat;
     const count = Math.max(3, Math.round((2 * Math.PI) / lonStep));
-    // Offset alternate rings by half a step for a denser, brick-like coverage.
-    const offset = i % 2 === 0 ? 0 : Math.PI / count;
+    // Sweep around starting from the front (lon = 0) in one consistent direction.
     for (let j = 0; j < count; j++) {
-      const lon = -Math.PI + (j / count) * 2 * Math.PI + offset;
-      targets.push({ lon, lat, dir: lonLatToDir(lon, lat) });
+      const lon = (j / count) * 2 * Math.PI;
+      const wrapped = lon > Math.PI ? lon - 2 * Math.PI : lon;
+      targets.push({
+        lon: wrapped,
+        lat,
+        dir: lonLatToDir(wrapped, lat),
+        kind: 'ring',
+      });
     }
   }
 
-  // Poles: ceiling (+90) and floor (-90).
-  targets.push({ lon: 0, lat: Math.PI / 2, dir: lonLatToDir(0, Math.PI / 2) });
-  targets.push({ lon: 0, lat: -Math.PI / 2, dir: lonLatToDir(0, -Math.PI / 2) });
+  // Poles last: ceiling (+90) then floor (-90).
+  targets.push({
+    lon: 0,
+    lat: Math.PI / 2,
+    dir: lonLatToDir(0, Math.PI / 2),
+    kind: 'ceiling',
+  });
+  targets.push({
+    lon: 0,
+    lat: -Math.PI / 2,
+    dir: lonLatToDir(0, -Math.PI / 2),
+    kind: 'floor',
+  });
 
   return targets;
 }

@@ -35,15 +35,22 @@ export interface DeviceRotation {
   orientation: number; // degrees: 0 | 90 | 180 | -90
 }
 
-/** Map a raw DeviceMotion reading to a camera->world quaternion. */
-export function deviceQuaternion(r: DeviceRotation): Quat {
+/**
+ * Map a raw DeviceMotion reading to a camera->world quaternion.
+ *
+ * `invertHorizontal` reverses the yaw sense. Some devices/conventions report the
+ * azimuth (alpha) with the opposite sign, which makes the whole panorama feel like
+ * it rotates the wrong way; flipping alpha corrects it without affecting pitch.
+ */
+export function deviceQuaternion(r: DeviceRotation, invertHorizontal = false): Quat {
   const { alpha, beta, gamma, orientation } = r;
+  const a = invertHorizontal ? -alpha : alpha;
   // three.js: euler.set(beta, alpha, -gamma, 'YXZ')
-  let q = quatFromEuler(beta, alpha, -gamma, 'YXZ');
+  let q = quatFromEuler(beta, a, -gamma, 'YXZ');
   q = quatMultiply(q, Q_BACK_CAMERA);
   // Compensate for the current screen rotation.
   const orient = orientation * DEG;
-  q = quatMultiply(q, quatFromAxisAngle(ZEE, -orient));
+  q = quatMultiply(q, quatFromAxisAngle(ZEE, invertHorizontal ? orient : -orient));
   return quatNormalize(q);
 }
 

@@ -6,7 +6,7 @@
 
 import { GLView } from 'expo-gl';
 import { Quat, quatToMat3 } from '../lib/quaternion';
-import { FovCalibration, fovTangents } from '../lib/fov';
+import { fovTangents } from '../lib/fov';
 import {
   BLEND_FRAG,
   DISPLAY_FRAG,
@@ -99,7 +99,7 @@ export class Compositor {
     texW: number,
     texH: number,
     rot: Quat,
-    calib: FovCalibration,
+    calib: { referenceFovDeg: number; mirrorX: boolean; mirrorY: boolean },
     target: RenderTarget,
   ): void {
     const gl = this.gl;
