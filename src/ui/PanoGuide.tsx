@@ -119,15 +119,7 @@ export function PanoGuide({
             strokeWidth={d.key === nearestIndex ? 3 : 2}
           />
         ))}
-        {/* Centre reticle */}
-        <Circle
-          cx={cx}
-          cy={cy}
-          r={30}
-          fill="none"
-          stroke={aligned ? colors.success : 'rgba(255,255,255,0.9)'}
-          strokeWidth={3}
-        />
+        {/* Small centre crosshair (the live-camera window is the main reticle) */}
         <Circle cx={cx} cy={cy} r={3} fill={aligned ? colors.success : '#fff'} />
       </Svg>
     </View>

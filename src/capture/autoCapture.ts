@@ -6,7 +6,7 @@
 import { Target, angleBetween, cameraForward } from '../lib/geo';
 import { Quat } from '../lib/quaternion';
 
-export const ALIGN_THRESHOLD_RAD = (11 * Math.PI) / 180; // aligned within 11°
+export const ALIGN_THRESHOLD_RAD = (7 * Math.PI) / 180; // aligned within 7°
 export const HIGHLIGHT_RANGE_RAD = (45 * Math.PI) / 180; // show nearby targets
 
 export interface NearestResult {

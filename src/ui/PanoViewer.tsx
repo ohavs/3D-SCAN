@@ -91,6 +91,7 @@ export function PanoViewer({ uri, style, fovDeg = 75 }: Props) {
         gl.uniform1f(gl.getUniformLocation(program, 'uMinWeight'), 0);
         gl.uniform1f(gl.getUniformLocation(program, 'uDim'), 0);
         gl.uniform3f(gl.getUniformLocation(program, 'uFill'), 0, 0, 0);
+        gl.uniform1f(gl.getUniformLocation(program, 'uGrid'), 0);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.endFrameEXP();
         rafRef.current = requestAnimationFrame(loop);

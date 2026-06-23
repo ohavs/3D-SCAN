@@ -20,9 +20,10 @@ import { ProgressRing } from '../src/ui/ProgressRing';
 import { PanoGuide } from '../src/ui/PanoGuide';
 import { colors, font, radius, spacing } from '../src/ui/theme';
 
-const CAPTURE_COOLDOWN_MS = 800;
-const DWELL_MS = 450; // hold steady on a target this long before auto-firing
-const STEADY_SPEED = 0.6; // rad/s — "holding still enough"
+const CAPTURE_COOLDOWN_MS = 900;
+const DWELL_MS = 850; // hold steady on a target this long (lets autofocus settle)
+const STEADY_SPEED = 0.5; // rad/s — "holding still enough"
+const WINDOW_FRAC = 0.7; // live-camera window size as a fraction of screen width
 
 export default function CaptureScreen() {
   const session = useSession();
@@ -36,6 +37,7 @@ export default function CaptureScreen() {
   const [autoEnabled, setAutoEnabled] = useState(true);
   const [nearestIndex, setNearestIndex] = useState(-1);
   const [aligned, setAligned] = useState(false);
+  const [dwelling, setDwelling] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -56,6 +58,7 @@ export default function CaptureScreen() {
 
   const tanV = Math.tan((session.calibration.referenceFovDeg * Math.PI) / 180 / 2);
   const tanU = tanV * (size.width / Math.max(1, size.height));
+  const windowSize = Math.min(size.width, size.height) * WINDOW_FRAC;
 
   const fireCapture = useCallback(
     async (targetIndex: number) => {
@@ -96,8 +99,6 @@ export default function CaptureScreen() {
     [session, quatRef],
   );
 
-  // The GL context exists only to accumulate captures + export; it sits behind the
-  // opaque camera and is never displayed. The auto-capture loop runs here too.
   const onContextCreate = useCallback(
     async (gl: ExpoWebGLRenderingContext) => {
       const comp = new Compositor(gl, {
@@ -111,7 +112,18 @@ export default function CaptureScreen() {
       }
       compositorRef.current = comp;
 
+      const dbW = gl.drawingBufferWidth;
+      const dbH = gl.drawingBufferHeight;
+      const dTanV = tanV;
+      const dTanU = dTanV * (dbW / Math.max(1, dbH));
+
       const loop = () => {
+        const c = compositorRef.current;
+        if (!c) return;
+        // Draw the sphere canvas (dark + wireframe + captured tiles, world-fixed).
+        c.renderDisplay(quatRef.current, dTanU, dTanV, dbW, dbH);
+        gl.endFrameEXP();
+
         const targets = targetsRef.current;
         const done = doneRef.current;
         const nearest = nearestFromQuat(quatRef.current, targets, done);
@@ -125,9 +137,11 @@ export default function CaptureScreen() {
         const now = Date.now();
         if (isAligned && steady) {
           if (alignedSince.current === 0) alignedSince.current = now;
+          const held = now - alignedSince.current;
+          setDwelling((p) => (p ? p : true));
           if (
             autoRef.current &&
-            now - alignedSince.current >= DWELL_MS &&
+            held >= DWELL_MS &&
             !capturingRef.current &&
             now - lastCaptureTs.current > CAPTURE_COOLDOWN_MS
           ) {
@@ -135,6 +149,7 @@ export default function CaptureScreen() {
           }
         } else {
           alignedSince.current = 0;
+          setDwelling((p) => (p === false ? p : false));
         }
 
         rafRef.current = requestAnimationFrame(loop);
@@ -197,17 +212,38 @@ export default function CaptureScreen() {
     });
   };
 
+  const frameColor = aligned
+    ? colors.success
+    : dwelling
+      ? colors.warn
+      : 'rgba(255,255,255,0.92)';
+
   return (
     <View style={styles.container} onLayout={onLayout}>
-      {/* Hidden GL context (behind the camera) for accumulation + export */}
+      {/* Sphere canvas (dark wireframe + captured tiles) */}
       <GLView style={StyleSheet.absoluteFill} onContextCreate={onContextCreate} />
-      {/* Fullscreen live camera */}
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing="back"
-        onCameraReady={() => setCameraReady(true)}
-      />
+
+      {/* Live-camera window, centred (the aiming "lens") */}
+      <View pointerEvents="none" style={styles.center}>
+        <View
+          style={[
+            styles.window,
+            {
+              width: windowSize,
+              height: windowSize,
+              borderColor: frameColor,
+            },
+          ]}
+        >
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            autofocus="on"
+            onCameraReady={() => setCameraReady(true)}
+          />
+        </View>
+      </View>
 
       <PanoGuide
         targets={session.targets}
@@ -303,6 +339,21 @@ function RoundBtn({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  center: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  window: {
+    overflow: 'hidden',
+    borderRadius: 24,
+    borderWidth: 3,
+    backgroundColor: '#000',
+  },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.md },
   topBar: {
     flexDirection: 'row-reverse',

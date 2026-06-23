@@ -241,6 +241,7 @@ export class Compositor {
       FILL_COLOR[1],
       FILL_COLOR[2],
     );
+    gl.uniform1f(gl.getUniformLocation(this.displayProgram, 'uGrid'), 1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

@@ -89,8 +89,14 @@ uniform float uTanV;   // tan(displayFovV/2)
 uniform float uMinWeight; // below this, show the empty canvas colour
 uniform float uDim;       // dim painted regions slightly (0..1)
 uniform vec3 uFill;       // empty-canvas colour (dark)
+uniform float uGrid;      // 1 = draw the sphere wireframe on empty areas
 
 const float PI = 3.141592653589793;
+
+float gridLine(float coord, float cells) {
+  float d = abs(fract(coord * cells) - 0.5) / cells;
+  return 1.0 - smoothstep(0.0, 0.012, d);
+}
 
 void main() {
   // Screen pixel -> camera ray (camera looks down -Z).
@@ -103,10 +109,15 @@ void main() {
   vec2 uv = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
 
   vec4 acc = texture2D(uAccum, uv);
-  float a = smoothstep(uMinWeight, uMinWeight + 0.25, acc.a);
-  // Opaque canvas: painted panorama over a dark background. The live camera is a
-  // separate centred window on top of this canvas.
-  vec3 rgb = mix(uFill, acc.rgb * (1.0 - uDim), a);
+  float painted = smoothstep(uMinWeight, uMinWeight + 0.25, acc.a);
+  vec3 rgb = mix(uFill, acc.rgb * (1.0 - uDim), painted);
+
+  if (uGrid > 0.5) {
+    // Sphere wireframe: meridians every 15°, parallels every 15°.
+    float g = max(gridLine(uv.x, 24.0), gridLine(uv.y, 12.0));
+    vec3 gridCol = vec3(0.22, 0.25, 0.33);
+    rgb = mix(rgb, gridCol, g * (1.0 - painted) * 0.85);
+  }
   gl_FragColor = vec4(rgb, 1.0);
 }
 `;
