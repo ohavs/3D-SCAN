@@ -49,9 +49,8 @@ export function shotCoverageDeg(referenceFovDeg: number): {
   hfovDeg: number;
   vfovDeg: number;
 } {
-  // Assume a typical ~4:3 sensor held in portrait: the narrow (horizontal) axis
-  // is 3/4 of the reference. These only drive target spacing, so exactness here
-  // is not critical — the feather blend tolerates extra overlap.
-  const narrow = referenceFovDeg * (3 / 4);
-  return { hfovDeg: narrow, vfovDeg: referenceFovDeg };
+  // These only drive target spacing. We assume generous per-shot coverage to keep
+  // the number of guided shots reasonable (~20 for a full sphere) — the feather
+  // blend tolerates the larger spacing.
+  return { hfovDeg: referenceFovDeg * 1.1, vfovDeg: referenceFovDeg };
 }

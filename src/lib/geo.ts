@@ -56,7 +56,7 @@ export function generateTargets(
   hfovDeg: number,
   vfovDeg: number,
   mode: CaptureMode = 'rows',
-  overlap = 0.35,
+  overlap = 0.2,
 ): Target[] {
   const latStep = vfovDeg * (1 - overlap) * DEG;
   const maxRingLat = (90 - vfovDeg * 0.5) * DEG;

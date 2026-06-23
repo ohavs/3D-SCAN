@@ -52,6 +52,7 @@ export interface OutputSize {
 }
 
 export const OUTPUT_SIZES: OutputSize[] = [
+  { width: 2048, height: 1024, label: '2048 × 1024 (מהיר)' },
   { width: 4096, height: 2048, label: '4096 × 2048' },
   { width: 5760, height: 2880, label: '5760 × 2880' },
 ];

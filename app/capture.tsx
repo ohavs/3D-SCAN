@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   LayoutChangeEvent,
   Pressable,
   StyleSheet,
@@ -53,6 +54,7 @@ export default function CaptureScreen() {
   const capturingRef = useRef(false);
   const lastCaptureTs = useRef(0);
   const alignedSince = useRef(0);
+  const alertedRef = useRef(false);
   const doneRef = useRef(session.doneSet);
   const targetsRef = useRef(session.targets);
   const autoRef = useRef(autoEnabled);
@@ -96,7 +98,13 @@ export default function CaptureScreen() {
         setError(null);
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
+        setError(msg);
+        if (!alertedRef.current) {
+          alertedRef.current = true;
+          setAutoEnabled(false); // stop the loop so the error stays on screen
+          Alert.alert('שגיאת צילום', msg);
+        }
       } finally {
         lastCaptureTs.current = Date.now();
         alignedSince.current = 0;
@@ -208,7 +216,9 @@ export default function CaptureScreen() {
       session.setExportedUri(uri);
       router.push('/review');
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
+      setError(msg);
+      Alert.alert('שגיאת ייצוא', msg);
     } finally {
       setBusy(false);
     }
