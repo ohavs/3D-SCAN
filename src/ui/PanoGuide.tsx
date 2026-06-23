@@ -71,6 +71,7 @@ export function PanoGuide({
     r: number;
     fill: string;
     stroke: string;
+    current: boolean;
   }[] = [];
   for (let i = 0; i < targets.length; i++) {
     const { dc, depth } = project(targets[i]!.dir);
@@ -83,15 +84,14 @@ export function PanoGuide({
       key: i,
       x,
       y,
-      r: isCurrent ? 16 : isDone ? 9 : 7,
-      fill: isDone ? colors.success : isCurrent ? colors.accentSoft : 'transparent',
-      stroke: isDone
-        ? colors.success
-        : isCurrent
-          ? colors.accent
-          : 'rgba(255,255,255,0.65)',
+      r: isDone ? 8 : 6,
+      fill: isDone ? colors.success : 'transparent',
+      stroke: isDone ? colors.success : 'rgba(255,255,255,0.55)',
+      current: isCurrent,
     });
   }
+
+  const guideColor = aligned ? colors.success : colors.accent;
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -102,25 +102,33 @@ export function PanoGuide({
             y1={cy}
             x2={guide.x}
             y2={guide.y}
-            stroke={aligned ? colors.success : colors.accent}
-            strokeWidth={3}
-            strokeDasharray="10 8"
+            stroke={guideColor}
+            strokeWidth={4}
             strokeLinecap="round"
+            opacity={0.9}
           />
         )}
-        {dots.map((d) => (
-          <Circle
-            key={d.key}
-            cx={d.x}
-            cy={d.y}
-            r={d.r}
-            fill={d.fill}
-            stroke={d.stroke}
-            strokeWidth={d.key === nearestIndex ? 3 : 2}
-          />
-        ))}
-        {/* Small centre crosshair (the live-camera window is the main reticle) */}
-        <Circle cx={cx} cy={cy} r={3} fill={aligned ? colors.success : '#fff'} />
+        {dots.map((d) =>
+          d.current ? (
+            <React.Fragment key={d.key}>
+              <Circle cx={d.x} cy={d.y} r={26} fill="none" stroke={guideColor} strokeWidth={1.5} opacity={0.4} />
+              <Circle cx={d.x} cy={d.y} r={16} fill={colors.accentSoft} stroke={guideColor} strokeWidth={3} />
+              <Circle cx={d.x} cy={d.y} r={5} fill={guideColor} />
+            </React.Fragment>
+          ) : (
+            <Circle
+              key={d.key}
+              cx={d.x}
+              cy={d.y}
+              r={d.r}
+              fill={d.fill}
+              stroke={d.stroke}
+              strokeWidth={2}
+            />
+          ),
+        )}
+        {/* Centre crosshair (the live-camera window is the main reticle) */}
+        <Circle cx={cx} cy={cy} r={4} fill={aligned ? colors.success : '#fff'} />
       </Svg>
     </View>
   );

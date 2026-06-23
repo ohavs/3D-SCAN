@@ -49,8 +49,13 @@ export function shotCoverageDeg(referenceFovDeg: number): {
   hfovDeg: number;
   vfovDeg: number;
 } {
-  // These only drive target spacing. We assume generous per-shot coverage to keep
-  // the number of guided shots reasonable (~20 for a full sphere) — the feather
-  // blend tolerates the larger spacing.
-  return { hfovDeg: referenceFovDeg * 1.1, vfovDeg: referenceFovDeg };
+  // The phone is held in PORTRAIT, so the reference FOV is the tall (vertical) axis
+  // and the horizontal coverage is narrower by the image aspect (~3:4). Target
+  // spacing must match the *true* per-shot coverage or the tiles won't overlap and
+  // black gaps appear between them.
+  const vfovDeg = referenceFovDeg;
+  const aspect = 3 / 4; // portrait width / height
+  const hHalf = Math.atan(Math.tan((vfovDeg * Math.PI) / 180 / 2) * aspect);
+  const hfovDeg = (hHalf * 2 * 180) / Math.PI;
+  return { hfovDeg, vfovDeg };
 }

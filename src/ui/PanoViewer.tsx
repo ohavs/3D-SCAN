@@ -42,7 +42,8 @@ export function PanoViewer({ uri, style, fovDeg = 75 }: Props) {
         start.current = { yaw: yaw.current, pitch: pitch.current };
       },
       onPanResponderMove: (_e, g) => {
-        yaw.current = start.current.yaw - g.dx * 0.005;
+        // Drag follows the image (natural direction).
+        yaw.current = start.current.yaw + g.dx * 0.005;
         pitch.current = Math.max(
           -PITCH_LIMIT,
           Math.min(PITCH_LIMIT, start.current.pitch + g.dy * 0.005),

@@ -19,7 +19,7 @@ import { Compositor, CaptureRecord } from '../src/gl/Compositor';
 import { ALIGN_THRESHOLD_RAD } from '../src/capture/autoCapture';
 import { Target, angleBetween, cameraForward } from '../src/lib/geo';
 import { Quat } from '../src/lib/quaternion';
-import { ProgressRing } from '../src/ui/ProgressRing';
+import { ProgressBar } from '../src/ui/ProgressBar';
 import { PanoGuide } from '../src/ui/PanoGuide';
 import { colors, font, radius, spacing } from '../src/ui/theme';
 
@@ -275,20 +275,22 @@ export default function CaptureScreen() {
       />
 
       <SafeAreaView style={styles.ui} pointerEvents="box-none">
-        <View style={styles.topBar} pointerEvents="box-none">
-          <ProgressRing progress={session.coverage} />
-          <View style={styles.topRight}>
+        <View style={styles.topCard} pointerEvents="box-none">
+          <View style={styles.chipsRow} pointerEvents="box-none">
             <Pressable onPress={session.toggleCaptureMode} style={styles.chip}>
-              <Text style={styles.chipText}>
+              <Text style={styles.chipLabel}>סריקה</Text>
+              <Text style={styles.chipValue}>
                 {session.captureMode === 'rows' ? 'שורות' : 'עמודות'}
               </Text>
             </Pressable>
             <Pressable onPress={toggleInvert} style={styles.chip}>
-              <Text style={styles.chipText}>
-                סיבוב {session.calibration.invertHorizontal ? 'הפוך' : 'רגיל'}
+              <Text style={styles.chipLabel}>סיבוב</Text>
+              <Text style={styles.chipValue}>
+                {session.calibration.invertHorizontal ? 'הפוך' : 'רגיל'}
               </Text>
             </Pressable>
           </View>
+          <ProgressBar progress={session.coverage} />
         </View>
 
         {(error || curTarget) && (
@@ -409,21 +411,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.md },
-  topBar: {
-    flexDirection: 'row-reverse',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+  topCard: {
+    backgroundColor: 'rgba(11,11,15,0.66)',
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.sm,
   },
-  topRight: { gap: spacing.xs, alignItems: 'flex-end' },
+  chipsRow: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'flex-start',
+    gap: spacing.sm,
+  },
   chip: {
-    backgroundColor: colors.overlay,
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.surfaceAlt,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  chipText: { color: colors.text, fontSize: font.small, fontWeight: '700' },
+  chipLabel: { color: colors.textDim, fontSize: font.small - 1, fontWeight: '600' },
+  chipValue: { color: colors.text, fontSize: font.small, fontWeight: '800' },
   centerInfo: { alignItems: 'center' },
   errorPill: {
     backgroundColor: 'rgba(239,68,68,0.92)',
