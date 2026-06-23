@@ -61,7 +61,7 @@ export function PanoViewer({ uri, style, fovDeg = 75 }: Props) {
     async (gl: ExpoWebGLRenderingContext) => {
       const program = createProgram(gl, FULLSCREEN_VERT, DISPLAY_FRAG);
       const quad = createFullscreenQuad(gl);
-      const tex = await loadTextureFromUri(gl, uri);
+      const tex = await loadTextureFromUri(gl, uri, 2048);
 
       const dbW = gl.drawingBufferWidth;
       const dbH = gl.drawingBufferHeight;

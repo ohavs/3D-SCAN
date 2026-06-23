@@ -3,7 +3,9 @@
  * a shared full-screen quad, and loading a captured photo (file URI) into a texture.
  */
 
-import { Asset } from 'expo-asset';
+import { File } from 'expo-file-system';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { decode as decodeJpeg } from 'jpeg-js';
 import type { ExpoWebGLRenderingContext } from 'expo-gl';
 
 export type GL = ExpoWebGLRenderingContext;
@@ -120,35 +122,45 @@ export function clearTarget(gl: GL, target: RenderTarget | null): void {
   gl.clear(gl.COLOR_BUFFER_BIT);
 }
 
-/** Load a captured photo (file URI) into a GL texture via expo-asset. */
+/**
+ * Load a captured photo (file URI) into a GL texture. We deliberately do NOT rely
+ * on expo-gl's `texImage2D(asset)` path (it silently produced black textures here).
+ * Instead we downscale with expo-image-manipulator, decode the JPEG to raw RGBA in
+ * JS (jpeg-js), and upload the bytes with the standard WebGL `texImage2D` overload —
+ * which is rock-solid. `targetWidth` keeps decode fast and GPU memory small.
+ */
 export async function loadTextureFromUri(
   gl: GL,
   uri: string,
+  targetWidth = 1024,
 ): Promise<LoadedTexture> {
-  const asset = Asset.fromURI(uri);
-  await asset.downloadAsync();
+  const resized = await manipulateAsync(uri, [{ resize: { width: targetWidth } }], {
+    compress: 0.92,
+    format: SaveFormat.JPEG,
+  });
+  const buffer = await new File(resized.uri).arrayBuffer();
+  const raw = decodeJpeg(new Uint8Array(buffer), {
+    useTArray: true,
+    formatAsRGBA: true,
+  });
+
   const texture = gl.createTexture();
   if (!texture) throw new Error('createTexture failed');
   gl.bindTexture(gl.TEXTURE_2D, texture);
-  // expo-gl accepts an Expo Asset as the pixel source for texImage2D.
   gl.texImage2D(
     gl.TEXTURE_2D,
     0,
     gl.RGBA,
+    raw.width,
+    raw.height,
+    0,
     gl.RGBA,
     gl.UNSIGNED_BYTE,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    asset as any,
+    raw.data,
   );
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  // Force the queued upload to execute so the texture is ready before we blend it.
-  gl.finish();
-  return {
-    texture,
-    width: asset.width ?? 0,
-    height: asset.height ?? 0,
-  };
+  return { texture, width: raw.width, height: raw.height };
 }
