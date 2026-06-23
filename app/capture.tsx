@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   LayoutChangeEvent,
   Pressable,
@@ -47,6 +48,7 @@ export default function CaptureScreen() {
   const [dwelling, setDwelling] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const compositorRef = useRef<Compositor | null>(null);
@@ -210,7 +212,9 @@ export default function CaptureScreen() {
   const finish = async () => {
     const comp = compositorRef.current;
     if (!comp) return;
-    setBusy(true);
+    setExporting(true);
+    // Let the overlay paint before the heavy synchronous encode blocks the thread.
+    await new Promise((r) => setTimeout(r, 50));
     try {
       const uri = await comp.exportJpegAsync(0.92);
       session.setExportedUri(uri);
@@ -220,7 +224,7 @@ export default function CaptureScreen() {
       setError(msg);
       Alert.alert('שגיאת ייצוא', msg);
     } finally {
-      setBusy(false);
+      setExporting(false);
     }
   };
 
@@ -330,12 +334,27 @@ export default function CaptureScreen() {
             <RoundBtn
               label="סיום"
               onPress={finish}
-              disabled={session.captures.length === 0 || busy}
+              disabled={session.captures.length === 0 || busy || exporting}
               primary
             />
           </View>
         </View>
       </SafeAreaView>
+
+      {busy && !exporting && (
+        <View pointerEvents="none" style={styles.savingPill}>
+          <ActivityIndicator color="#fff" />
+          <Text style={styles.savingText}>שומר תמונה…</Text>
+        </View>
+      )}
+
+      {exporting && (
+        <View style={styles.exportOverlay}>
+          <ActivityIndicator size="large" color={colors.accent} />
+          <Text style={styles.exportText}>מעבד פנורמה…</Text>
+          <Text style={styles.exportSub}>זה עשוי לקחת כמה שניות</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -455,4 +474,30 @@ const styles = StyleSheet.create({
   },
   roundBtnSmall: { paddingVertical: 6 },
   roundBtnText: { color: colors.text, fontSize: font.small, fontWeight: '700' },
+  savingPill: {
+    position: 'absolute',
+    bottom: 130,
+    alignSelf: 'center',
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.overlay,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  savingText: { color: '#fff', fontSize: font.small, fontWeight: '700' },
+  exportOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  exportText: { color: colors.text, fontSize: font.heading, fontWeight: '800' },
+  exportSub: { color: colors.textDim, fontSize: font.small },
 });
