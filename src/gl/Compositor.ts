@@ -4,9 +4,11 @@
  * here; React screens only feed it orientations and read back a snapshot URI.
  */
 
-import { GLView } from 'expo-gl';
+import { encode as encodeJpeg } from 'jpeg-js';
+import { cacheDirectory, writeAsStringAsync } from 'expo-file-system/legacy';
 import { Quat, quatToMat3 } from '../lib/quaternion';
 import { fovTangents } from '../lib/fov';
+import { bytesToBase64 } from '../lib/base64';
 import {
   BLEND_FRAG,
   DISPLAY_FRAG,
@@ -246,14 +248,18 @@ export class Compositor {
   }
 
   /**
-   * Render the accumulation buffer into an RGBA8 target and snapshot it to a JPEG
-   * file (encoded natively by expo-gl). Returns the file URI.
+   * Render the accumulation buffer into an RGBA8 target, read the pixels back, and
+   * encode a JPEG in JS (jpeg-js). We do NOT use GLView.takeSnapshotAsync — its
+   * Android `framebuffer` option silently read the wrong buffer and produced black
+   * exports. readPixels from our own FBO is deterministic. Returns the file URI.
    */
   async exportJpegAsync(quality = 0.92): Promise<string> {
     const gl = this.gl;
-    const out = createRenderTarget(gl, this.opts.outputWidth, this.opts.outputHeight);
+    const w = this.opts.outputWidth;
+    const h = this.opts.outputHeight;
+    const out = createRenderTarget(gl, w, h);
     gl.bindFramebuffer(gl.FRAMEBUFFER, out.framebuffer);
-    gl.viewport(0, 0, out.width, out.height);
+    gl.viewport(0, 0, w, h);
     gl.disable(gl.BLEND);
     gl.useProgram(this.exportProgram);
     bindQuad(gl, this.exportProgram, this.quad);
@@ -267,22 +273,35 @@ export class Compositor {
       FILL_COLOR[2],
     );
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.finish();
 
-    const snapshot = await GLView.takeSnapshotAsync(gl, {
-      framebuffer: out.framebuffer,
-      rect: { x: 0, y: 0, width: out.width, height: out.height },
-      flip: true, // GL framebuffers are bottom-up; flip so north is on top
-      format: 'jpeg',
-      compress: quality,
-    });
+    const pixels = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.deleteFramebuffer(out.framebuffer);
     gl.deleteTexture(out.texture);
 
-    const uri =
-      typeof snapshot.localUri === 'string' ? snapshot.localUri : snapshot.uri;
-    return uri as string;
+    // GL is bottom-up; flip rows in place so north ends up on top.
+    const rowLen = w * 4;
+    const tmp = new Uint8Array(rowLen);
+    for (let y = 0; y < Math.floor(h / 2); y++) {
+      const top = y * rowLen;
+      const bot = (h - 1 - y) * rowLen;
+      tmp.set(pixels.subarray(top, top + rowLen));
+      pixels.copyWithin(top, bot, bot + rowLen);
+      pixels.set(tmp, bot);
+    }
+
+    const jpegData = encodeJpeg(
+      { data: pixels, width: w, height: h },
+      Math.round(quality * 100),
+    );
+    const uri = `${cacheDirectory ?? ''}pano_export_${Date.now()}.jpg`;
+    await writeAsStringAsync(uri, bytesToBase64(jpegData.data), {
+      encoding: 'base64',
+    });
+    return uri;
   }
 
   dispose(): void {

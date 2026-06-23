@@ -14,7 +14,8 @@ import * as Haptics from 'expo-haptics';
 import { useSession } from '../src/session/SessionContext';
 import { useOrientation } from '../src/capture/useOrientation';
 import { Compositor, CaptureRecord } from '../src/gl/Compositor';
-import { ALIGN_THRESHOLD_RAD, nearestFromQuat } from '../src/capture/autoCapture';
+import { ALIGN_THRESHOLD_RAD } from '../src/capture/autoCapture';
+import { Target, angleBetween, cameraForward } from '../src/lib/geo';
 import { Quat } from '../src/lib/quaternion';
 import { ProgressRing } from '../src/ui/ProgressRing';
 import { PanoGuide } from '../src/ui/PanoGuide';
@@ -23,7 +24,12 @@ import { colors, font, radius, spacing } from '../src/ui/theme';
 const CAPTURE_COOLDOWN_MS = 900;
 const DWELL_MS = 850; // hold steady on a target this long (lets autofocus settle)
 const STEADY_SPEED = 0.5; // rad/s — "holding still enough"
-const WINDOW_FRAC = 0.7; // live-camera window size as a fraction of screen width
+
+/** First target in the chosen order that hasn't been captured yet. */
+function firstPending(targets: Target[], done: ReadonlySet<number>): number {
+  for (let i = 0; i < targets.length; i++) if (!done.has(i)) return i;
+  return -1;
+}
 
 export default function CaptureScreen() {
   const session = useSession();
@@ -35,11 +41,12 @@ export default function CaptureScreen() {
 
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [autoEnabled, setAutoEnabled] = useState(true);
-  const [nearestIndex, setNearestIndex] = useState(-1);
+  const [currentIndex, setCurrentIndex] = useState(-1);
   const [aligned, setAligned] = useState(false);
   const [dwelling, setDwelling] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const compositorRef = useRef<Compositor | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -58,7 +65,8 @@ export default function CaptureScreen() {
 
   const tanV = Math.tan((session.calibration.referenceFovDeg * Math.PI) / 180 / 2);
   const tanU = tanV * (size.width / Math.max(1, size.height));
-  const windowSize = Math.min(size.width, size.height) * WINDOW_FRAC;
+  const winW = size.width * 0.96;
+  const winH = size.height * 0.72;
 
   const fireCapture = useCallback(
     async (targetIndex: number) => {
@@ -73,22 +81,22 @@ export default function CaptureScreen() {
           quality: 0.85,
           skipProcessing: false,
         });
-        if (photo?.uri) {
-          const record: CaptureRecord = {
-            uri: photo.uri,
-            width: photo.width,
-            height: photo.height,
-            rot,
-            referenceFovDeg: session.calibration.referenceFovDeg,
-            mirrorX: session.calibration.mirrorX,
-            mirrorY: session.calibration.mirrorY,
-          };
-          await comp.addCaptureAsync(record);
-          session.addCapture(record, targetIndex);
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        }
-      } catch {
-        // a failed frame just won't be added
+        if (!photo?.uri) throw new Error('takePictureAsync returned no image');
+        const record: CaptureRecord = {
+          uri: photo.uri,
+          width: photo.width,
+          height: photo.height,
+          rot,
+          referenceFovDeg: session.calibration.referenceFovDeg,
+          mirrorX: session.calibration.mirrorX,
+          mirrorY: session.calibration.mirrorY,
+        };
+        await comp.addCaptureAsync(record);
+        session.addCapture(record, targetIndex);
+        setError(null);
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       } finally {
         lastCaptureTs.current = Date.now();
         alignedSince.current = 0;
@@ -106,9 +114,13 @@ export default function CaptureScreen() {
         outputHeight: session.outputSize.height,
       });
       comp.init();
-      for (const entry of session.captures) {
-        // eslint-disable-next-line no-await-in-loop
-        await comp.addCaptureAsync(entry.record);
+      try {
+        for (const entry of session.captures) {
+          // eslint-disable-next-line no-await-in-loop
+          await comp.addCaptureAsync(entry.record);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       }
       compositorRef.current = comp;
 
@@ -120,36 +132,35 @@ export default function CaptureScreen() {
       const loop = () => {
         const c = compositorRef.current;
         if (!c) return;
-        // Draw the sphere canvas (dark + wireframe + captured tiles, world-fixed).
         c.renderDisplay(quatRef.current, dTanU, dTanV, dbW, dbH);
         gl.endFrameEXP();
 
         const targets = targetsRef.current;
         const done = doneRef.current;
-        const nearest = nearestFromQuat(quatRef.current, targets, done);
-        setNearestIndex((p) => (p === nearest.index ? p : nearest.index));
+        const cur = firstPending(targets, done);
+        setCurrentIndex((p) => (p === cur ? p : cur));
 
+        const fwd = cameraForward(quatRef.current);
         const isAligned =
-          nearest.index >= 0 && nearest.angle <= ALIGN_THRESHOLD_RAD;
+          cur >= 0 && angleBetween(fwd, targets[cur]!.dir) <= ALIGN_THRESHOLD_RAD;
         const steady = angularSpeedRef.current <= STEADY_SPEED;
         setAligned((p) => (p === isAligned ? p : isAligned));
 
         const now = Date.now();
         if (isAligned && steady) {
           if (alignedSince.current === 0) alignedSince.current = now;
-          const held = now - alignedSince.current;
           setDwelling((p) => (p ? p : true));
           if (
             autoRef.current &&
-            held >= DWELL_MS &&
+            now - alignedSince.current >= DWELL_MS &&
             !capturingRef.current &&
             now - lastCaptureTs.current > CAPTURE_COOLDOWN_MS
           ) {
-            void fireCapture(nearest.index);
+            void fireCapture(cur);
           }
         } else {
           alignedSince.current = 0;
-          setDwelling((p) => (p === false ? p : false));
+          setDwelling((p) => (p ? false : p));
         }
 
         rafRef.current = requestAnimationFrame(loop);
@@ -174,12 +185,8 @@ export default function CaptureScreen() {
   };
 
   const manualShutter = () => {
-    const nearest = nearestFromQuat(
-      quatRef.current,
-      targetsRef.current,
-      doneRef.current,
-    );
-    void fireCapture(nearest.index >= 0 ? nearest.index : 0);
+    const cur = firstPending(targetsRef.current, doneRef.current);
+    void fireCapture(cur >= 0 ? cur : 0);
   };
 
   const undo = async () => {
@@ -200,6 +207,8 @@ export default function CaptureScreen() {
       const uri = await comp.exportJpegAsync(0.92);
       session.setExportedUri(uri);
       router.push('/review');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -212,27 +221,21 @@ export default function CaptureScreen() {
     });
   };
 
-  const frameColor = aligned
-    ? colors.success
-    : dwelling
-      ? colors.warn
-      : 'rgba(255,255,255,0.92)';
+  const curTarget: Target | null =
+    currentIndex >= 0 ? session.targets[currentIndex]! : null;
+  const frameColor = aligned ? colors.success : dwelling ? colors.warn : 'rgba(255,255,255,0.9)';
 
   return (
     <View style={styles.container} onLayout={onLayout}>
       {/* Sphere canvas (dark wireframe + captured tiles) */}
       <GLView style={StyleSheet.absoluteFill} onContextCreate={onContextCreate} />
 
-      {/* Live-camera window, centred (the aiming "lens") */}
+      {/* Live-camera window — large, almost fullscreen */}
       <View pointerEvents="none" style={styles.center}>
         <View
           style={[
             styles.window,
-            {
-              width: windowSize,
-              height: windowSize,
-              borderColor: frameColor,
-            },
+            { width: winW, height: winH, borderColor: frameColor },
           ]}
         >
           <CameraView
@@ -248,7 +251,7 @@ export default function CaptureScreen() {
       <PanoGuide
         targets={session.targets}
         done={session.doneSet}
-        nearestIndex={nearestIndex}
+        nearestIndex={currentIndex}
         viewQuat={uiQuat}
         tanU={tanU}
         tanV={tanV}
@@ -260,13 +263,35 @@ export default function CaptureScreen() {
       <SafeAreaView style={styles.ui} pointerEvents="box-none">
         <View style={styles.topBar} pointerEvents="box-none">
           <ProgressRing progress={session.coverage} />
-          <Pressable onPress={toggleInvert} style={styles.invertBtn}>
-            <Text style={styles.invertText}>
-              סיבוב{'\n'}
-              {session.calibration.invertHorizontal ? 'הפוך' : 'רגיל'}
-            </Text>
-          </Pressable>
+          <View style={styles.topRight}>
+            <Pressable onPress={session.toggleCaptureMode} style={styles.chip}>
+              <Text style={styles.chipText}>
+                {session.captureMode === 'rows' ? 'שורות' : 'עמודות'}
+              </Text>
+            </Pressable>
+            <Pressable onPress={toggleInvert} style={styles.chip}>
+              <Text style={styles.chipText}>
+                סיבוב {session.calibration.invertHorizontal ? 'הפוך' : 'רגיל'}
+              </Text>
+            </Pressable>
+          </View>
         </View>
+
+        {(error || curTarget) && (
+          <View style={styles.centerInfo} pointerEvents="none">
+            {error ? (
+              <View style={styles.errorPill}>
+                <Text style={styles.errorText}>שגיאה: {error}</Text>
+              </View>
+            ) : (
+              <View style={styles.countPill}>
+                <Text style={styles.countText}>
+                  {session.captures.length} תמונות
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
 
         <View style={styles.bottomBar} pointerEvents="box-none">
           <View style={styles.sideCol}>
@@ -350,8 +375,8 @@ const styles = StyleSheet.create({
   },
   window: {
     overflow: 'hidden',
-    borderRadius: 24,
-    borderWidth: 3,
+    borderRadius: 22,
+    borderWidth: 2,
     backgroundColor: '#000',
   },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.md },
@@ -360,20 +385,32 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
   },
-  invertBtn: {
+  topRight: { gap: spacing.xs, alignItems: 'flex-end' },
+  chip: {
     backgroundColor: colors.overlay,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  invertText: {
-    color: colors.text,
-    fontSize: font.small - 1,
-    fontWeight: '700',
-    textAlign: 'center',
+  chipText: { color: colors.text, fontSize: font.small, fontWeight: '700' },
+  centerInfo: { alignItems: 'center' },
+  errorPill: {
+    backgroundColor: 'rgba(239,68,68,0.92)',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    maxWidth: '90%',
   },
+  errorText: { color: '#fff', fontSize: font.small, fontWeight: '700' },
+  countPill: {
+    backgroundColor: colors.overlay,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  countText: { color: colors.text, fontSize: font.small, fontWeight: '700' },
   bottomBar: {
     flexDirection: 'row-reverse',
     alignItems: 'center',

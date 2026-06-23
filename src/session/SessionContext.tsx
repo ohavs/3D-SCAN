@@ -14,8 +14,36 @@ import React, {
 } from 'react';
 import { CaptureRecord } from '../gl/Compositor';
 import { DEFAULT_CALIBRATION, FovCalibration, shotCoverageDeg } from '../lib/fov';
-import { Target, generateTargets } from '../lib/geo';
+import {
+  CaptureMode,
+  Target,
+  angleBetween,
+  cameraForward,
+  generateTargets,
+} from '../lib/geo';
 import { IDENTITY_QUAT, Quat } from '../lib/quaternion';
+
+function buildTargets(referenceFovDeg: number, mode: CaptureMode): Target[] {
+  const { hfovDeg, vfovDeg } = shotCoverageDeg(referenceFovDeg);
+  return generateTargets(hfovDeg, vfovDeg, mode);
+}
+
+/** Index of the target whose direction is closest to `dir`. */
+function nearestTargetIndex(
+  dir: readonly [number, number, number],
+  targets: Target[],
+): number {
+  let best = 0;
+  let bestAngle = Infinity;
+  for (let i = 0; i < targets.length; i++) {
+    const a = angleBetween(dir, targets[i]!.dir);
+    if (a < bestAngle) {
+      bestAngle = a;
+      best = i;
+    }
+  }
+  return best;
+}
 
 export interface OutputSize {
   width: number;
@@ -40,6 +68,8 @@ interface SessionValue {
   setOutputSize: (s: OutputSize) => void;
   headingOffset: Quat;
   setHeadingOffset: (q: Quat) => void;
+  captureMode: CaptureMode;
+  toggleCaptureMode: () => void;
   targets: Target[];
   captures: CaptureEntry[];
   doneSet: Set<number>;
@@ -59,11 +89,27 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [captures, setCaptures] = useState<CaptureEntry[]>([]);
   const [exportedUri, setExportedUri] = useState<string | null>(null);
   const [headingOffset, setHeadingOffset] = useState<Quat>(IDENTITY_QUAT);
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('rows');
 
-  // Targets depend only on the shot coverage implied by the calibrated FOV.
-  const targets = useMemo<Target[]>(() => {
-    const { hfovDeg, vfovDeg } = shotCoverageDeg(calibration.referenceFovDeg);
-    return generateTargets(hfovDeg, vfovDeg);
+  // Targets depend on the FOV (shot coverage) and the chosen capture order.
+  const targets = useMemo<Target[]>(
+    () => buildTargets(calibration.referenceFovDeg, captureMode),
+    [calibration.referenceFovDeg, captureMode],
+  );
+
+  // Switching order re-indexes targets, so remap each capture to its new nearest.
+  const toggleCaptureMode = useCallback(() => {
+    setCaptureMode((prev) => {
+      const next: CaptureMode = prev === 'rows' ? 'columns' : 'rows';
+      const newTargets = buildTargets(calibration.referenceFovDeg, next);
+      setCaptures((cs) =>
+        cs.map((c) => ({
+          ...c,
+          targetIndex: nearestTargetIndex(cameraForward(c.record.rot), newTargets),
+        })),
+      );
+      return next;
+    });
   }, [calibration.referenceFovDeg]);
 
   const doneSet = useMemo(
@@ -107,6 +153,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setOutputSize,
     headingOffset,
     setHeadingOffset,
+    captureMode,
+    toggleCaptureMode,
     targets,
     captures,
     doneSet,
