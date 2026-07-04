@@ -12,7 +12,6 @@ import { colors } from './theme';
 
 interface Props {
   targets: Target[];
-  done: ReadonlySet<number>;
   /** Live refs written by the capture loop — read here on our own clock. */
   quatRef: React.RefObject<Quat>;
   currentIndexRef: React.RefObject<number>;
@@ -24,23 +23,18 @@ interface Props {
   height: number;
 }
 
-const TICK_MS = 33; // ~30fps for the overlay; the GL canvas runs at full rate
-const RING_R = 46;
+const TICK_MS = 33; // ~30fps overlay
+const RING_R = 44;
 
 /**
- * Street View-style guidance, isolated from the parent screen: it polls the live
- * orientation refs on its own timer so the capture screen never re-renders during
- * motion (that was the main source of lag).
- *
- * Visual language:
- *  - centre ring = "the lens"; the current target dot must be brought inside it
- *  - while holding, an arc fills around the ring (dwell -> auto-shoot)
- *  - a soft line + edge chevron point toward the target when it's away/off-screen
- *  - green dots = captured, faint dots = remaining
+ * Street View-style guidance, redesigned: exactly ONE target on screen — the next
+ * one in the guided order. Bring it into the centre ring; a green arc fills while
+ * holding; the shot fires. No other dots, no clutter. When the target is off to
+ * the side, a short line + edge chevron point the way. Runs on its own 30fps
+ * timer reading live refs, so the parent never re-renders during motion.
  */
 export function GuidanceLayer({
   targets,
-  done,
   quatRef,
   currentIndexRef,
   alignedRef,
@@ -74,125 +68,103 @@ export function GuidanceLayer({
   const cx = width / 2;
   const cy = height / 2;
 
-  const project = (dir: readonly [number, number, number]) => {
-    const dc = quatRotateVec3(inv, dir);
-    const depth = -dc[2];
-    return { dc, depth };
-  };
-  const toScreen = (dc: readonly [number, number, number], depth: number) => ({
-    x: ((dc[0] / depth / tanU) * 0.5 + 0.5) * width,
-    y: (0.5 - (dc[1] / depth / tanV) * 0.5) * height,
-  });
-
-  // Current target position (or edge direction when behind/off-screen).
-  let target: { x: number; y: number; onScreen: boolean } | null = null;
+  // Project the single current target.
+  let tx = 0;
+  let ty = 0;
+  let onScreen = false;
+  let hasTarget = false;
   if (cur >= 0 && targets[cur]) {
-    const { dc, depth } = project(targets[cur]!.dir);
+    hasTarget = true;
+    const dc = quatRotateVec3(inv, targets[cur]!.dir);
+    const depth = -dc[2];
     if (depth > 0.05) {
-      const p = toScreen(dc, depth);
-      const onScreen =
-        p.x > -30 && p.x < width + 30 && p.y > -30 && p.y < height + 30;
-      target = { ...p, onScreen };
+      tx = ((dc[0] / depth / tanU) * 0.5 + 0.5) * width;
+      ty = (0.5 - (dc[1] / depth / tanV) * 0.5) * height;
+      onScreen =
+        tx > 30 && tx < width - 30 && ty > 30 && ty < height - 30;
     }
-    if (!target || !target.onScreen) {
-      // Point toward it along the screen edge.
-      const ang = Math.atan2(dc[0], dc[1]); // screen-plane direction
-      const r = Math.min(width, height) * 0.44;
-      target = {
-        x: cx + Math.sin(ang) * r,
-        y: cy - Math.cos(ang) * r,
-        onScreen: false,
-      };
+    if (!onScreen) {
+      // Clamp to a screen-edge direction indicator.
+      const ang = Math.atan2(dc[0], dc[1]);
+      const r = Math.min(width, height) * 0.42;
+      tx = cx + Math.sin(ang) * r;
+      ty = cy - Math.cos(ang) * r;
     }
-  }
-
-  // Neighbour dots (done + pending) that are in front of the camera.
-  const dots: { key: number; x: number; y: number; isDone: boolean }[] = [];
-  for (let i = 0; i < targets.length; i++) {
-    if (i === cur) continue;
-    const { dc, depth } = project(targets[i]!.dir);
-    if (depth <= 0.05) continue;
-    const p = toScreen(dc, depth);
-    if (p.x < -20 || p.x > width + 20 || p.y < -20 || p.y > height + 20) continue;
-    dots.push({ key: i, x: p.x, y: p.y, isDone: done.has(i) });
   }
 
   const tint = aligned ? colors.success : colors.accent;
   const circumference = 2 * Math.PI * RING_R;
 
-  // Edge chevron triangle points toward the off-screen target.
+  // Distance-based: shorten the guide line so it starts at the ring edge.
+  const dx = tx - cx;
+  const dy = ty - cy;
+  const dist = Math.hypot(dx, dy);
+  const lineNeeded = hasTarget && !aligned && dist > RING_R + 26;
+  const ux = dist > 0 ? dx / dist : 0;
+  const uy = dist > 0 ? dy / dist : 0;
+  const lineX1 = cx + ux * (RING_R + 8);
+  const lineY1 = cy + uy * (RING_R + 8);
+  const lineX2 = tx - ux * 26;
+  const lineY2 = ty - uy * 26;
+
+  // Edge chevron when off-screen.
   let chevron: string | null = null;
-  if (target && !target.onScreen) {
-    const ang = Math.atan2(target.x - cx, cy - target.y);
-    const bx = target.x;
-    const by = target.y;
-    const s = 14;
-    const tipX = bx + Math.sin(ang) * s;
-    const tipY = by - Math.cos(ang) * s;
-    const leftX = bx + Math.sin(ang + 2.4) * s;
-    const leftY = by - Math.cos(ang + 2.4) * s;
-    const rightX = bx + Math.sin(ang - 2.4) * s;
-    const rightY = by - Math.cos(ang - 2.4) * s;
+  if (hasTarget && !onScreen) {
+    const ang = Math.atan2(dx, -dy);
+    const s = 15;
+    const tipX = tx + Math.sin(ang) * s;
+    const tipY = ty - Math.cos(ang) * s;
+    const leftX = tx + Math.sin(ang + 2.5) * s;
+    const leftY = ty - Math.cos(ang + 2.5) * s;
+    const rightX = tx + Math.sin(ang - 2.5) * s;
+    const rightY = ty - Math.cos(ang - 2.5) * s;
     chevron = `${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`;
   }
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <Svg width={width} height={height}>
-        {/* guide line from ring toward the target */}
-        {target && !aligned && (
+        {lineNeeded && (
           <Line
-            x1={cx}
-            y1={cy}
-            x2={target.x}
-            y2={target.y}
-            stroke={tint}
-            strokeWidth={3.5}
+            x1={lineX1}
+            y1={lineY1}
+            x2={lineX2}
+            y2={lineY2}
+            stroke={colors.accent}
+            strokeWidth={3}
             strokeLinecap="round"
-            opacity={0.75}
+            strokeDasharray="2 10"
+            opacity={0.9}
           />
         )}
-        {chevron && <Polygon points={chevron} fill={colors.accent} opacity={0.95} />}
+        {chevron && <Polygon points={chevron} fill={colors.accent} />}
 
-        {/* neighbour dots */}
-        {dots.map((d) => (
-          <Circle
-            key={d.key}
-            cx={d.x}
-            cy={d.y}
-            r={d.isDone ? 8 : 6}
-            fill={d.isDone ? colors.success : 'rgba(255,255,255,0.06)'}
-            stroke={d.isDone ? colors.success : 'rgba(255,255,255,0.5)'}
-            strokeWidth={d.isDone ? 0 : 1.5}
-          />
-        ))}
-
-        {/* current target dot */}
-        {target && target.onScreen && (
+        {/* The single target: soft glow + dot */}
+        {hasTarget && onScreen && !aligned && (
           <>
+            <Circle cx={tx} cy={ty} r={34} fill="rgba(56,189,248,0.10)" />
+            <Circle cx={tx} cy={ty} r={22} fill="rgba(56,189,248,0.18)" />
             <Circle
-              cx={target.x}
-              cy={target.y}
-              r={17}
-              fill="rgba(59,130,246,0.25)"
-              stroke={tint}
-              strokeWidth={3}
+              cx={tx}
+              cy={ty}
+              r={13}
+              fill="rgba(56,189,248,0.9)"
+              stroke="#fff"
+              strokeWidth={2}
             />
-            <Circle cx={target.x} cy={target.y} r={5.5} fill={tint} />
           </>
         )}
 
-        {/* centre ring ("lens") */}
+        {/* Centre ring ("bring the dot here") */}
         <Circle
           cx={cx}
           cy={cy}
           r={RING_R}
-          fill="none"
-          stroke={aligned ? colors.success : 'rgba(255,255,255,0.85)'}
-          strokeWidth={3}
-          opacity={0.95}
+          fill={aligned ? 'rgba(52,211,153,0.10)' : 'none'}
+          stroke={aligned ? colors.success : 'rgba(255,255,255,0.8)'}
+          strokeWidth={aligned ? 3 : 2}
         />
-        {/* dwell progress arc */}
+        {/* Dwell progress arc */}
         {aligned && dwell > 0 && (
           <Circle
             cx={cx}
@@ -206,7 +178,12 @@ export function GuidanceLayer({
             transform={`rotate(-90 ${cx} ${cy})`}
           />
         )}
-        <Circle cx={cx} cy={cy} r={3.5} fill={aligned ? colors.success : '#fff'} />
+        <Circle
+          cx={cx}
+          cy={cy}
+          r={3}
+          fill={aligned ? colors.success : 'rgba(255,255,255,0.9)'}
+        />
       </Svg>
     </View>
   );

@@ -210,7 +210,7 @@ export class Compositor {
     screenWidth: number,
     screenHeight: number,
     minWeight = 0.04,
-    dim = 0.12,
+    dim = 0.06,
   ): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);

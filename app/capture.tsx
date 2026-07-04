@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   LayoutChangeEvent,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useAudioPlayer } from 'expo-audio';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -31,6 +33,9 @@ const CAPTURE_COOLDOWN_MS = 900;
 const DWELL_MS = 800; // hold steady this long before auto-shoot (autofocus settles)
 const STEADY_SPEED = 0.5; // rad/s
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const CHIME = require('../assets/sounds/capture-chime.wav');
+
 function firstPending(targets: Target[], done: ReadonlySet<number>): number {
   for (let i = 0; i < targets.length; i++) if (!done.has(i)) return i;
   return -1;
@@ -53,6 +58,8 @@ export default function CaptureScreen() {
     session.calibration.invertHorizontal,
   );
   const cameraRef = useRef<CameraView>(null);
+  const chime = useAudioPlayer(CHIME);
+  const flashOpacity = useRef(new Animated.Value(0)).current;
 
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [autoEnabled, setAutoEnabled] = useState(true);
@@ -128,6 +135,19 @@ export default function CaptureScreen() {
         };
         await comp.addCaptureAsync(record);
         session.addCapture(record, targetIndex);
+        // Gentle feedback: soft chime + light haptic + quick white flash.
+        try {
+          chime.seekTo(0);
+          chime.play();
+        } catch {
+          // audio is best-effort
+        }
+        flashOpacity.setValue(0.55);
+        Animated.timing(flashOpacity, {
+          toValue: 0,
+          duration: 260,
+          useNativeDriver: true,
+        }).start();
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } catch (e) {
         setAutoEnabled(false);
@@ -139,7 +159,7 @@ export default function CaptureScreen() {
         setBusy(false);
       }
     },
-    [session, quatRef],
+    [session, quatRef, chime, flashOpacity],
   );
 
   const finish = useCallback(async () => {
@@ -306,9 +326,14 @@ export default function CaptureScreen() {
         pointerEvents="none"
       />
 
+      {/* Capture flash */}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.flash, { opacity: flashOpacity }]}
+      />
+
       <GuidanceLayer
         targets={session.targets}
-        done={session.doneSet}
         quatRef={quatRef}
         currentIndexRef={currentIndexRef}
         alignedRef={alignedRef}
@@ -446,6 +471,14 @@ function RoundBtn({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  flash: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#fff',
+  },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.md },
   topCard: {
     backgroundColor: 'rgba(11,11,15,0.72)',

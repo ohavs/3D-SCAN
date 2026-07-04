@@ -55,7 +55,7 @@ export function cameraUp(q: Quat): Vec3 {
 export function generateTargets(
   hfovDeg: number,
   vfovDeg: number,
-  overlap = 0.35,
+  overlap = 0.22,
 ): Target[] {
   const latStep = vfovDeg * (1 - overlap) * DEG;
   const maxRingLat = (90 - vfovDeg * 0.5) * DEG;
