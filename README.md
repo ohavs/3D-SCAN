@@ -47,10 +47,20 @@ eas build -p android --profile preview
 
 פרופיל `preview` מפיק **APK** להתקנה ישירה. `production` מפיק AAB ל-Play Store.
 
-## זרימת מסכים
+## זרימת מסכים (אפליקציית סריקה לנדל"ן)
 
-`app/index` (פתיחה) → `app/permissions` (הרשאות) → `app/calibrate` (כיול
-אופק/FOV/רזולוציה) → `app/capture` (צילום) → `app/review` (סקירה + שמירה/שיתוף).
+`app/index` — רשימת נכסים (פרויקטים) → `app/project/[id]` — חדרי הנכס +
+Tour ID + העלאה לעורך → `app/capture` — סריקת חדר מודרכת (canvas כדור +
+מצלמה + הכוונה לנקודה הבאה, צילום אוטומטי עם dwell, סיום אוטומטי בכיסוי
+מלא) → `app/review` — בדיקה, אישור/צילום מחדש. `app/settings` — חיבור
+לעורך (Base URL + ADMIN_SECRET) ורזולוציה. `app/calibrate` — FOV + כיוון.
+
+## העלאה ישירה לעורך
+
+`src/upload/editorApi.ts` מממש את הפרוטוקול של העורך:
+`POST /api/upload` (Cookie: admin=SECRET) → `PUT` presigned R2 →
+`POST /api/scenes` עם `tour_id`, `title` (שם החדר), `image_url`,
+`order_index`. מגדירים את החיבור במסך ההגדרות ומדביקים Tour ID בכל נכס.
 
 ## כיול ופתרון תקלות על המכשיר
 

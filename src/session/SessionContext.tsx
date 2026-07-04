@@ -80,6 +80,9 @@ interface SessionValue {
   exportedUri: string | null;
   setExportedUri: (uri: string | null) => void;
   coverage: number;
+  /** The room this capture session belongs to (resets when switching rooms). */
+  sessionRoomId: string | null;
+  beginRoomSession: (roomId: string) => void;
 }
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -142,6 +145,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setExportedUri(null);
   }, []);
 
+  const [sessionRoomId, setSessionRoomId] = useState<string | null>(null);
+  const beginRoomSession = useCallback(
+    (roomId: string) => {
+      setSessionRoomId((prev) => {
+        if (prev !== roomId) {
+          reset();
+        }
+        return roomId;
+      });
+    },
+    [reset],
+  );
+
   const coverage = useMemo(
     () => (targets.length === 0 ? 0 : doneSet.size / targets.length),
     [doneSet, targets.length],
@@ -165,6 +181,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     exportedUri,
     setExportedUri,
     coverage,
+    sessionRoomId,
+    beginRoomSession,
   };
 
   return (

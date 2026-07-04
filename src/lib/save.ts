@@ -26,6 +26,8 @@ export function renameToCache(srcUri: string, name: string): string {
 }
 
 export async function saveToGallery(uri: string): Promise<void> {
+  const perm = await MediaLibrary.requestPermissionsAsync(true); // write-only
+  if (!perm.granted) throw new Error('לא אושרה גישה לשמירת תמונות');
   await MediaLibrary.saveToLibraryAsync(uri);
 }
 

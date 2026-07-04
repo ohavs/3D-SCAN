@@ -6,24 +6,23 @@ import { CameraView } from 'expo-camera';
 import { Button } from '../src/ui/Button';
 import { colors, font, radius, spacing } from '../src/ui/theme';
 import { useOrientation } from '../src/capture/useOrientation';
-import { headingOffset } from '../src/lib/orientation';
 import { cameraForward, cameraUp } from '../src/lib/geo';
 import { MAX_FOV_DEG, MIN_FOV_DEG } from '../src/lib/fov';
-import { OUTPUT_SIZES, useSession } from '../src/session/SessionContext';
+import { useSession } from '../src/session/SessionContext';
 
 export default function CalibrateScreen() {
   const session = useSession();
-  const { rawQuatRef, uiQuat } = useOrientation(
+  const { uiQuat } = useOrientation(
     session.headingOffset,
     session.calibration.invertHorizontal,
   );
 
   const fwd = cameraForward(uiQuat);
   const up = cameraUp(uiQuat);
-  const pitchDeg = Math.round((Math.asin(Math.max(-1, Math.min(1, fwd[1]))) * 180) / Math.PI);
-  // Roll: tilt of the camera's up vector away from world-up, signed.
-  const rollRad = Math.atan2(up[0], up[1]);
-  const rollDeg = (rollRad * 180) / Math.PI;
+  const pitchDeg = Math.round(
+    (Math.asin(Math.max(-1, Math.min(1, fwd[1]))) * 180) / Math.PI,
+  );
+  const rollDeg = (Math.atan2(up[0], up[1]) * 180) / Math.PI;
   const level = Math.abs(pitchDeg) <= 4 && Math.abs(rollDeg) <= 4;
 
   const setFov = (delta: number) => {
@@ -34,17 +33,17 @@ export default function CalibrateScreen() {
     session.setCalibration({ ...session.calibration, referenceFovDeg: next });
   };
 
-  const confirm = () => {
-    session.setHeadingOffset(headingOffset(rawQuatRef.current));
-    router.push('/capture');
-  };
+  const toggleInvert = () =>
+    session.setCalibration({
+      ...session.calibration,
+      invertHorizontal: !session.calibration.invertHorizontal,
+    });
 
   return (
     <View style={styles.container}>
       <CameraView style={StyleSheet.absoluteFill} facing="back" />
       <View style={[StyleSheet.absoluteFill, styles.scrim]} />
 
-      {/* Horizon guide */}
       <View style={styles.center} pointerEvents="none">
         <View
           style={[
@@ -58,17 +57,13 @@ export default function CalibrateScreen() {
             },
           ]}
         />
-        <View
-          style={[styles.bubble, { borderColor: level ? colors.success : colors.warn }]}
-        />
       </View>
 
       <SafeAreaView style={styles.ui}>
-        <View style={styles.headerCard}>
+        <View style={styles.card}>
           <Text style={styles.title}>כיול</Text>
           <Text style={styles.subtitle}>
-            כוונו את הטלפון לאופק עד שהקו ירוק, ולחצו "כייל והמשך". הכיוון הנוכחי
-            יוגדר כחזית הפנורמה.
+            בדיקת יישור: החזיקו את הטלפון מול האופק — הקו אמור להתיישר ולהוריק.
           </Text>
         </View>
 
@@ -87,31 +82,35 @@ export default function CalibrateScreen() {
               </Pressable>
             </View>
             <Text style={styles.cardHint}>
-              כוונון עדין מצמצם תפרים. ברירת מחדל ~66°.
+              אם יש תפרים/כפילויות בין תמונות סמוכות — כווננו בהדרגה (±1°).
             </Text>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>רזולוציית פלט</Text>
-            <View style={styles.sizes}>
-              {OUTPUT_SIZES.map((s) => {
-                const active = s.width === session.outputSize.width;
-                return (
-                  <Pressable
-                    key={s.label}
-                    onPress={() => session.setOutputSize(s)}
-                    style={[styles.sizeChip, active && styles.sizeChipActive]}
-                  >
-                    <Text style={[styles.sizeText, active && styles.sizeTextActive]}>
-                      {s.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <Text style={styles.cardTitle}>כיוון סיבוב</Text>
+            <Pressable style={styles.invertRow} onPress={toggleInvert}>
+              <View
+                style={[
+                  styles.toggle,
+                  session.calibration.invertHorizontal && styles.toggleOn,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.knob,
+                    session.calibration.invertHorizontal && styles.knobOn,
+                  ]}
+                />
+              </View>
+              <Text style={styles.invertText}>
+                {session.calibration.invertHorizontal
+                  ? 'הפוך (אם הנקודות זזות נגד הסיבוב)'
+                  : 'רגיל'}
+              </Text>
+            </Pressable>
           </View>
 
-          <Button label="כייל והמשך" onPress={confirm} />
+          <Button label="שמור וחזור" onPress={() => router.back()} />
         </View>
       </SafeAreaView>
     </View>
@@ -120,7 +119,7 @@ export default function CalibrateScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  scrim: { backgroundColor: 'rgba(0,0,0,0.25)' },
+  scrim: { backgroundColor: 'rgba(0,0,0,0.3)' },
   center: {
     position: 'absolute',
     top: 0,
@@ -130,35 +129,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  horizon: {
-    width: '70%',
-    borderTopWidth: 2,
-    borderStyle: 'dashed',
-  },
-  bubble: {
-    position: 'absolute',
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2,
-  },
+  horizon: { width: '70%', borderTopWidth: 2, borderStyle: 'dashed' },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.lg },
-  headerCard: {
-    backgroundColor: colors.overlay,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: spacing.xs,
-  },
-  title: { color: colors.text, fontSize: font.title, fontWeight: '900' },
-  subtitle: { color: colors.text, fontSize: font.small, lineHeight: 20 },
-  controls: { gap: spacing.md },
   card: {
-    backgroundColor: colors.overlay,
-    borderRadius: radius.md,
+    backgroundColor: 'rgba(11,11,15,0.72)',
+    borderRadius: radius.lg,
     padding: spacing.md,
     gap: spacing.sm,
   },
-  cardTitle: { color: colors.text, fontSize: font.body, fontWeight: '700' },
+  title: { color: colors.text, fontSize: font.title, fontWeight: '900' },
+  subtitle: { color: colors.text, fontSize: font.small, lineHeight: 19 },
+  controls: { gap: spacing.md },
+  cardTitle: { color: colors.text, fontSize: font.body, fontWeight: '800' },
   cardHint: { color: colors.textDim, fontSize: font.small },
   stepper: {
     flexDirection: 'row-reverse',
@@ -182,16 +164,29 @@ const styles = StyleSheet.create({
     minWidth: 70,
     textAlign: 'center',
   },
-  sizes: { flexDirection: 'row-reverse', gap: spacing.sm },
-  sizeChip: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.pill,
+  invertRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  toggle: {
+    width: 52,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: colors.surfaceAlt,
     borderWidth: 1,
     borderColor: colors.border,
+    padding: 3,
+    justifyContent: 'center',
   },
-  sizeChipActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
-  sizeText: { color: colors.textDim, fontSize: font.small, fontWeight: '700' },
-  sizeTextActive: { color: colors.text },
+  toggleOn: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+  knob: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.textDim,
+    alignSelf: 'flex-start',
+  },
+  knobOn: { backgroundColor: colors.accent, alignSelf: 'flex-end' },
+  invertText: { color: colors.text, fontSize: font.body, flex: 1 },
 });

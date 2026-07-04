@@ -1,50 +1,72 @@
 import React, { useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Button } from '../src/ui/Button';
 import { PanoViewer } from '../src/ui/PanoViewer';
 import { colors, font, radius, spacing } from '../src/ui/theme';
+import { useProjects } from '../src/store/projects';
 import { useSession } from '../src/session/SessionContext';
-import {
-  panoFilename,
-  renameToCache,
-  saveToGallery,
-  sharePano,
-} from '../src/lib/save';
+import { saveToGallery, sharePano } from '../src/lib/save';
 
 export default function ReviewScreen() {
+  const { project: projectId, room: roomId } = useLocalSearchParams<{
+    project: string;
+    room: string;
+  }>();
+  const store = useProjects();
   const session = useSession();
   const [busy, setBusy] = useState(false);
-  const uri = session.exportedUri;
 
-  const withFile = async (fn: (u: string) => Promise<void>) => {
+  const project = store.getProject(projectId ?? '');
+  const room = project?.rooms.find((r) => r.id === roomId);
+  const uri = room?.imageUri ?? session.exportedUri;
+
+  const retake = () => {
+    Alert.alert('לצלם מחדש?', 'הפנורמה הנוכחית של החדר תוחלף.', [
+      { text: 'ביטול', style: 'cancel' },
+      {
+        text: 'צלם מחדש',
+        onPress: () => {
+          if (projectId && roomId) {
+            store.clearRoomCapture(projectId, roomId);
+            session.reset();
+            router.replace(`/capture?project=${projectId}&room=${roomId}`);
+          }
+        },
+      },
+    ]);
+  };
+
+  const doSave = async () => {
     if (!uri) return;
     setBusy(true);
     try {
-      const named = renameToCache(uri, panoFilename());
-      await fn(named);
+      await saveToGallery(uri);
+      Alert.alert('נשמר', 'הפנורמה נשמרה לגלריית התמונות.');
     } catch (e) {
-      Alert.alert('שגיאה', String(e instanceof Error ? e.message : e));
+      Alert.alert('שגיאה', e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const onSave = () =>
-    withFile(async (u) => {
-      await saveToGallery(u);
-      Alert.alert('נשמר', 'הפנורמה נשמרה לגלריה.');
-    });
-
-  const onShare = () => withFile((u) => sharePano(u));
+  const doShare = async () => {
+    if (!uri) return;
+    setBusy(true);
+    try {
+      await sharePano(uri);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>סקירה</Text>
+        <Text style={styles.title}>{room?.title ?? 'סקירה'}</Text>
         <Text style={styles.subtitle}>
-          גררו כדי לבדוק את הפנורמה. אם חסרים אזורים — חזרו והשלימו, אחרת שמרו.
+          גררו להסתכל סביב. אם הכל תקין — אשרו וחזרו לרשימת החדרים.
         </Text>
       </View>
 
@@ -54,39 +76,40 @@ export default function ReviewScreen() {
         ) : (
           <Text style={styles.empty}>אין פנורמה להצגה.</Text>
         )}
-        <View style={styles.coverageBadge}>
-          <Text style={styles.coverageText}>
-            כיסוי {Math.round(session.coverage * 100)}% · {session.captures.length}{' '}
-            תמונות
-          </Text>
-        </View>
+        {room?.status === 'uploaded' && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>הועלה לעורך ✓</Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.actions}>
+        <Button
+          label="אשר וחזור לחדרים"
+          onPress={() => router.replace(`/project/${projectId}`)}
+        />
         <View style={styles.row}>
           <Button
-            label="השלם אזורים"
+            label="צלם מחדש"
             variant="secondary"
-            onPress={() => router.push('/capture')}
+            onPress={retake}
+            style={styles.flex}
+          />
+          <Button
+            label="שמור לגלריה"
+            variant="secondary"
+            onPress={doSave}
+            loading={busy}
             style={styles.flex}
           />
           <Button
             label="שתף"
             variant="secondary"
-            onPress={onShare}
+            onPress={doShare}
             loading={busy}
             style={styles.flex}
           />
         </View>
-        <Button label="שמור לגלריה" onPress={onSave} loading={busy} />
-        <Button
-          label="פנורמה חדשה"
-          variant="ghost"
-          onPress={() => {
-            session.reset();
-            router.replace('/calibrate');
-          }}
-        />
       </View>
     </SafeAreaView>
   );
@@ -94,9 +117,9 @@ export default function ReviewScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, padding: spacing.lg },
-  header: { gap: spacing.xs, marginBottom: spacing.md },
+  header: { gap: 4, marginBottom: spacing.md },
   title: { color: colors.text, fontSize: font.title, fontWeight: '900' },
-  subtitle: { color: colors.textDim, fontSize: font.small, lineHeight: 20 },
+  subtitle: { color: colors.textDim, fontSize: font.small, lineHeight: 19 },
   viewer: {
     flex: 1,
     borderRadius: radius.lg,
@@ -106,16 +129,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   empty: { color: colors.textDim, fontSize: font.body },
-  coverageBadge: {
+  badge: {
     position: 'absolute',
     top: spacing.md,
     right: spacing.md,
-    backgroundColor: colors.overlay,
+    backgroundColor: 'rgba(34,197,94,0.9)',
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
   },
-  coverageText: { color: colors.text, fontSize: font.small, fontWeight: '700' },
+  badgeText: { color: '#fff', fontSize: font.small, fontWeight: '800' },
   actions: { gap: spacing.sm, marginTop: spacing.md },
   row: { flexDirection: 'row-reverse', gap: spacing.sm },
   flex: { flex: 1 },
