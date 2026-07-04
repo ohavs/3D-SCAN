@@ -77,8 +77,8 @@ void main() {
   // shots, so AVERAGING overlaps produces ghosting/blur. Instead the higher-weight
   // photo wins, with a narrow crossfade band around equality to soften the seam.
   if (prev.a <= 0.001) { gl_FragColor = vec4(photo, w); return; }
-  float t = clamp((w - prev.a) / 0.2 * 0.5 + 0.5, 0.0, 1.0);
-  gl_FragColor = vec4(mix(prev.rgb, photo, t), max(prev.a, w));
+  float mixT = clamp((w - prev.a) / 0.2 * 0.5 + 0.5, 0.0, 1.0);
+  gl_FragColor = vec4(mix(prev.rgb, photo, mixT), max(prev.a, w));
 }
 `;
 
