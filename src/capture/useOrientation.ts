@@ -1,109 +1,59 @@
 /**
- * Subscribes to Expo DeviceMotion and exposes a smoothed camera->world quaternion.
- *
- * The live quaternion is kept in a ref (not React state) so the GL render loop can
- * read it every frame without triggering re-renders. A throttled copy is mirrored
- * into state for UI (target highlighting) at a lower rate. The heading offset is
- * passed in from the session so calibration persists across screens.
+ * React hook over the singleton gyro+gravity orientation engine. Exposes live
+ * ref-style accessors (zero re-renders during motion) plus a throttled state
+ * mirror for screens that render from orientation (the calibrate horizon).
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { DeviceMotion } from 'expo-sensors';
-import { IDENTITY_QUAT, Quat, quatAngle, quatSlerp } from '../lib/quaternion';
-import { applyOffset, deviceQuaternion } from '../lib/orientation';
+import { useEffect, useMemo, useState } from 'react';
+import { Quat } from '../lib/quaternion';
+import { orientationEngine } from './orientationEngine';
 
-const UPDATE_INTERVAL_MS = 1000 / 60;
-const SMOOTHING = 0.25; // slerp factor toward the latest reading (lower = smoother)
-const UI_THROTTLE_MS = 60;
+const UI_THROTTLE_MS = 66;
 
 export interface OrientationApi {
-  /** Smoothed, offset-applied camera->world quaternion (updated in place). */
+  /** Live camera->world quaternion (getter-backed ref, no re-renders). */
   quatRef: React.RefObject<Quat>;
-  /** Raw (no offset) quaternion — used to compute a heading calibration. */
-  rawQuatRef: React.RefObject<Quat>;
-  /** Angular speed estimate in rad/s (for "hold steady" shutter gating). */
+  /** Live |ω| in rad/s (for the "hold steady" gate). */
   angularSpeedRef: React.RefObject<number>;
-  /** Latest quaternion mirrored to state (throttled) for UI. */
+  /** Throttled copy for UI that renders from orientation. */
   uiQuat: Quat;
-  available: boolean | null;
+  /** Make the current facing direction the panorama front (lon = 0). */
+  zeroYaw: () => void;
 }
 
-export function useOrientation(
-  offset: Quat | null,
-  invertHorizontal = false,
-  enabled = true,
-): OrientationApi {
-  const quatRef = useRef<Quat>(IDENTITY_QUAT);
-  const rawQuatRef = useRef<Quat>(IDENTITY_QUAT);
-  const angularSpeedRef = useRef<number>(0);
-  const offsetRef = useRef<Quat | null>(offset);
-  const invertRef = useRef<boolean>(invertHorizontal);
-  const lastRaw = useRef<Quat>(IDENTITY_QUAT);
-  const lastTs = useRef<number>(0);
-  const [available, setAvailable] = useState<boolean | null>(null);
-  const [uiQuat, setUiQuat] = useState<Quat>(IDENTITY_QUAT);
-  const lastUi = useRef(0);
-
-  // Keep refs in sync without re-subscribing the sensor.
-  offsetRef.current = offset;
-  invertRef.current = invertHorizontal;
+export function useOrientation(mirrorToState = false): OrientationApi {
+  const [uiQuat, setUiQuat] = useState<Quat>(orientationEngine.quaternion);
 
   useEffect(() => {
-    if (!enabled) return;
-    let mounted = true;
+    orientationEngine.acquire();
+    if (!mirrorToState) return;
+    const t = setInterval(
+      () => setUiQuat(orientationEngine.quaternion),
+      UI_THROTTLE_MS,
+    );
+    return () => clearInterval(t);
+  }, [mirrorToState]);
 
-    (async () => {
-      try {
-        const ok = await DeviceMotion.isAvailableAsync();
-        if (!mounted) return;
-        setAvailable(ok);
-        if (!ok) return;
-        await DeviceMotion.requestPermissionsAsync();
-      } catch {
-        if (mounted) setAvailable(false);
-      }
-    })();
-
-    DeviceMotion.setUpdateInterval(UPDATE_INTERVAL_MS);
-    const sub = DeviceMotion.addListener((data) => {
-      if (!data?.rotation) return;
-      const { alpha, beta, gamma } = data.rotation;
-      const raw = deviceQuaternion(
-        {
-          alpha,
-          beta,
-          gamma,
-          orientation: data.orientation ?? 0,
+  const refs = useMemo(
+    () => ({
+      quatRef: {
+        get current(): Quat {
+          return orientationEngine.quaternion;
         },
-        invertRef.current,
-      );
-      rawQuatRef.current = raw;
+      } as React.RefObject<Quat>,
+      angularSpeedRef: {
+        get current(): number {
+          return orientationEngine.angularSpeed;
+        },
+      } as React.RefObject<number>,
+    }),
+    [],
+  );
 
-      const now = Date.now();
-      if (lastTs.current > 0) {
-        const dt = Math.max(0.001, (now - lastTs.current) / 1000);
-        angularSpeedRef.current = quatAngle(lastRaw.current, raw) / dt;
-      }
-      lastRaw.current = raw;
-      lastTs.current = now;
-
-      const target = offsetRef.current
-        ? applyOffset(offsetRef.current, raw)
-        : raw;
-      // Low-pass via slerp for shake-free tracking.
-      quatRef.current = quatSlerp(quatRef.current, target, SMOOTHING);
-
-      if (now - lastUi.current >= UI_THROTTLE_MS) {
-        lastUi.current = now;
-        setUiQuat(quatRef.current);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      sub.remove();
-    };
-  }, [enabled]);
-
-  return { quatRef, rawQuatRef, angularSpeedRef, uiQuat, available };
+  return {
+    quatRef: refs.quatRef,
+    angularSpeedRef: refs.angularSpeedRef,
+    uiQuat,
+    zeroYaw: () => orientationEngine.zeroYaw(),
+  };
 }

@@ -9,7 +9,7 @@
  *   3. EXPORT  — copies the accumulation buffer into an RGBA8 target for snapshot,
  *                filling never-seen texels with a neutral colour.
  *
- * Camera frame convention (matches src/lib/orientation.ts): the camera looks down
+ * Camera frame convention (matches src/capture/orientationEngine.ts): looks down
  * its local -Z axis, +X right, +Y up. `uRot` is the camera->world matrix (mat3).
  */
 

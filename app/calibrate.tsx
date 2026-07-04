@@ -12,10 +12,7 @@ import { useSession } from '../src/session/SessionContext';
 
 export default function CalibrateScreen() {
   const session = useSession();
-  const { uiQuat } = useOrientation(
-    session.headingOffset,
-    session.calibration.invertHorizontal,
-  );
+  const { uiQuat } = useOrientation(true);
 
   const fwd = cameraForward(uiQuat);
   const up = cameraUp(uiQuat);
@@ -32,12 +29,6 @@ export default function CalibrateScreen() {
     );
     session.setCalibration({ ...session.calibration, referenceFovDeg: next });
   };
-
-  const toggleInvert = () =>
-    session.setCalibration({
-      ...session.calibration,
-      invertHorizontal: !session.calibration.invertHorizontal,
-    });
 
   return (
     <View style={styles.container}>
@@ -84,30 +75,6 @@ export default function CalibrateScreen() {
             <Text style={styles.cardHint}>
               אם יש תפרים/כפילויות בין תמונות סמוכות — כווננו בהדרגה (±1°).
             </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>כיוון סיבוב</Text>
-            <Pressable style={styles.invertRow} onPress={toggleInvert}>
-              <View
-                style={[
-                  styles.toggle,
-                  session.calibration.invertHorizontal && styles.toggleOn,
-                ]}
-              >
-                <View
-                  style={[
-                    styles.knob,
-                    session.calibration.invertHorizontal && styles.knobOn,
-                  ]}
-                />
-              </View>
-              <Text style={styles.invertText}>
-                {session.calibration.invertHorizontal
-                  ? 'הפוך (אם הנקודות זזות נגד הסיבוב)'
-                  : 'רגיל'}
-              </Text>
-            </Pressable>
           </View>
 
           <Button label="שמור וחזור" onPress={() => router.back()} />
@@ -164,29 +131,4 @@ const styles = StyleSheet.create({
     minWidth: 70,
     textAlign: 'center',
   },
-  invertRow: {
-    flexDirection: 'row-reverse',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  toggle: {
-    width: 52,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 3,
-    justifyContent: 'center',
-  },
-  toggleOn: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
-  knob: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: colors.textDim,
-    alignSelf: 'flex-start',
-  },
-  knobOn: { backgroundColor: colors.accent, alignSelf: 'flex-end' },
-  invertText: { color: colors.text, fontSize: font.body, flex: 1 },
 });

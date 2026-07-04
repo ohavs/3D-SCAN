@@ -44,8 +44,6 @@ interface SessionValue {
   setCalibration: (c: FovCalibration) => void;
   outputSize: OutputSize;
   setOutputSize: (s: OutputSize) => void;
-  headingOffset: Quat;
-  setHeadingOffset: (q: Quat) => void;
   targets: Target[];
   captures: CaptureEntry[];
   doneSet: Set<number>;
@@ -67,8 +65,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [outputSize, setOutputSize] = useState<OutputSize>(OUTPUT_SIZES[0]!);
   const [captures, setCaptures] = useState<CaptureEntry[]>([]);
   const [exportedUri, setExportedUri] = useState<string | null>(null);
-  const [headingOffset, setHeadingOffset] = useState<Quat>(IDENTITY_QUAT);
-
   // Targets depend only on the FOV (per-shot coverage).
   const targets = useMemo<Target[]>(
     () => buildTargets(calibration.referenceFovDeg),
@@ -127,8 +123,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setCalibration,
     outputSize,
     setOutputSize,
-    headingOffset,
-    setHeadingOffset,
     targets,
     captures,
     doneSet,

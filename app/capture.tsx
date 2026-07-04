@@ -18,11 +18,11 @@ import * as Haptics from 'expo-haptics';
 import { copyAsync } from 'expo-file-system/legacy';
 import { useSession } from '../src/session/SessionContext';
 import { useOrientation } from '../src/capture/useOrientation';
+import { orientationEngine } from '../src/capture/orientationEngine';
 import { Compositor, CaptureRecord } from '../src/gl/Compositor';
 import { ALIGN_THRESHOLD_RAD } from '../src/capture/autoCapture';
 import { Target, angleBetween, cameraForward } from '../src/lib/geo';
-import { headingOffset as computeHeadingOffset } from '../src/lib/orientation';
-import { IDENTITY_QUAT, Quat, quatAngle } from '../src/lib/quaternion';
+import { Quat } from '../src/lib/quaternion';
 import { ensurePanosDir, PANOS_DIR, useProjects } from '../src/store/projects';
 import { GuidanceLayer } from '../src/ui/GuidanceLayer';
 import { ProgressBar } from '../src/ui/ProgressBar';
@@ -53,10 +53,7 @@ export default function CaptureScreen() {
   const project = store.getProject(projectId ?? '');
   const room = project?.rooms.find((r) => r.id === roomId);
 
-  const { quatRef, rawQuatRef, angularSpeedRef } = useOrientation(
-    session.headingOffset,
-    session.calibration.invertHorizontal,
-  );
+  const { quatRef, angularSpeedRef } = useOrientation();
   const cameraRef = useRef<CameraView>(null);
   const chime = useAudioPlayer(CHIME);
   const flashOpacity = useRef(new Animated.Value(0)).current;
@@ -89,19 +86,19 @@ export default function CaptureScreen() {
   autoRef.current = autoEnabled;
   readyRef.current = cameraReady;
 
-  // Begin/continue this room's session; zero the heading on a fresh session so the
-  // first shot becomes the panorama's front.
+  // Begin/continue this room's session. On a fresh session, re-level the tracker
+  // and zero the yaw once it's live, so the first shot becomes the panorama front.
   useEffect(() => {
     if (!roomId) return;
     const fresh = session.sessionRoomId !== roomId;
     session.beginRoomSession(roomId);
     if (fresh) {
       const timer = setInterval(() => {
-        if (quatAngle(rawQuatRef.current, IDENTITY_QUAT) > 0.02) {
-          session.setHeadingOffset(computeHeadingOffset(rawQuatRef.current));
+        if (orientationEngine.isInitialized) {
+          orientationEngine.zeroYaw();
           clearInterval(timer);
         }
-      }, 100);
+      }, 120);
       return () => clearInterval(timer);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
