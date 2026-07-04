@@ -215,10 +215,11 @@ export class Compositor {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, screenWidth, screenHeight);
-    gl.clearColor(FILL_COLOR[0], FILL_COLOR[1], FILL_COLOR[2], 1);
+    // Transparent where unpainted — the live camera underneath shows through and
+    // captured tiles appear "glued" onto the world (the Photaf effect).
+    gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    // Single fullscreen pass; opaque dark canvas, no GL blending needed.
-    gl.disable(gl.BLEND);
+    gl.disable(gl.BLEND); // shader outputs premultiplied alpha directly
 
     gl.useProgram(this.displayProgram);
     bindQuad(gl, this.displayProgram, this.quad);
@@ -237,13 +238,7 @@ export class Compositor {
       minWeight,
     );
     gl.uniform1f(gl.getUniformLocation(this.displayProgram, 'uDim'), dim);
-    gl.uniform3f(
-      gl.getUniformLocation(this.displayProgram, 'uFill'),
-      FILL_COLOR[0],
-      FILL_COLOR[1],
-      FILL_COLOR[2],
-    );
-    gl.uniform1f(gl.getUniformLocation(this.displayProgram, 'uGrid'), 1);
+    gl.uniform1f(gl.getUniformLocation(this.displayProgram, 'uOpaque'), 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -282,16 +277,10 @@ export class Compositor {
     gl.deleteFramebuffer(out.framebuffer);
     gl.deleteTexture(out.texture);
 
-    // GL is bottom-up; flip rows in place so north ends up on top.
-    const rowLen = w * 4;
-    const tmp = new Uint8Array(rowLen);
-    for (let y = 0; y < Math.floor(h / 2); y++) {
-      const top = y * rowLen;
-      const bot = (h - 1 - y) * rowLen;
-      tmp.set(pixels.subarray(top, top + rowLen));
-      pixels.copyWithin(top, bot, bot + rowLen);
-      pixels.set(tmp, bot);
-    }
+    // No row flip needed: the blend shader maps lat=+90 (zenith) to vUv.y=0, which
+    // is the FBO's bottom row — and readPixels reads bottom-up, so the zenith is
+    // already the first row, exactly where a JPEG's top row belongs. Flipping here
+    // produced upside-down exports.
 
     const jpegData = encodeJpeg(
       { data: pixels, width: w, height: h },

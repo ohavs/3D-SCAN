@@ -1,18 +1,18 @@
 /** Dark, camera-app palette + spacing. All UI is RTL/Hebrew. */
 
 export const colors = {
-  bg: '#0B0B0F',
-  surface: '#16161D',
-  surfaceAlt: '#1F1F29',
-  border: '#2A2A36',
-  text: '#F5F5F7',
-  textDim: '#9A9AA8',
-  accent: '#3B82F6',
-  accentSoft: 'rgba(59,130,246,0.18)',
-  success: '#22C55E',
-  warn: '#F59E0B',
-  danger: '#EF4444',
-  overlay: 'rgba(0,0,0,0.55)',
+  bg: '#0A0E17',
+  surface: '#111827',
+  surfaceAlt: '#1B2436',
+  border: '#28324A',
+  text: '#F8FAFC',
+  textDim: '#94A3B8',
+  accent: '#38BDF8',
+  accentSoft: 'rgba(56,189,248,0.16)',
+  success: '#34D399',
+  warn: '#FBBF24',
+  danger: '#F87171',
+  overlay: 'rgba(4,8,16,0.6)',
 } as const;
 
 export const radius = {

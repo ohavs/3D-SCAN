@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Button } from '../src/ui/Button';
@@ -17,6 +17,7 @@ export default function ReviewScreen() {
   const store = useProjects();
   const session = useSession();
   const [busy, setBusy] = useState(false);
+  const [viewerReady, setViewerReady] = useState(false);
 
   const project = store.getProject(projectId ?? '');
   const room = project?.rooms.find((r) => r.id === roomId);
@@ -72,9 +73,19 @@ export default function ReviewScreen() {
 
       <View style={styles.viewer}>
         {uri ? (
-          <PanoViewer uri={uri} style={StyleSheet.absoluteFill as object} />
+          <PanoViewer
+            uri={uri}
+            style={StyleSheet.absoluteFill as object}
+            onReady={() => setViewerReady(true)}
+          />
         ) : (
           <Text style={styles.empty}>אין פנורמה להצגה.</Text>
+        )}
+        {uri && !viewerReady && (
+          <View style={styles.loaderOverlay}>
+            <ActivityIndicator size="large" color={colors.accent} />
+            <Text style={styles.loaderText}>טוען פנורמה…</Text>
+          </View>
         )}
         {room?.status === 'uploaded' && (
           <View style={styles.badge}>
@@ -129,6 +140,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   empty: { color: colors.textDim, fontSize: font.body },
+  loaderOverlay: {
+    ...StyleSheet.absoluteFill as object,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  loaderText: { color: colors.textDim, fontSize: font.small, fontWeight: '700' },
   badge: {
     position: 'absolute',
     top: spacing.md,

@@ -289,19 +289,22 @@ export default function CaptureScreen() {
 
   return (
     <View style={styles.container} onLayout={onLayout}>
-      {/* Sphere canvas behind (painted tiles + wireframe) */}
-      <GLView style={StyleSheet.absoluteFill} onContextCreate={onContextCreate} />
+      {/* Fullscreen live camera */}
+      <CameraView
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        facing="back"
+        autofocus="on"
+        onCameraReady={() => setCameraReady(true)}
+      />
 
-      {/* Fullscreen live camera in a soft frame */}
-      <View pointerEvents="none" style={styles.cameraWrap}>
-        <CameraView
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          facing="back"
-          autofocus="on"
-          onCameraReady={() => setCameraReady(true)}
-        />
-      </View>
+      {/* Transparent panorama overlay: captured tiles painted onto the world,
+          moving with the rotation over the live camera (Photaf-style) */}
+      <GLView
+        style={StyleSheet.absoluteFill}
+        onContextCreate={onContextCreate}
+        pointerEvents="none"
+      />
 
       <GuidanceLayer
         targets={session.targets}
@@ -380,6 +383,13 @@ export default function CaptureScreen() {
         </View>
       </SafeAreaView>
 
+      {!cameraReady && (
+        <View style={styles.exportOverlay} pointerEvents="none">
+          <ActivityIndicator size="large" color={colors.accent} />
+          <Text style={styles.exportText}>מכין את המצלמה…</Text>
+        </View>
+      )}
+
       {busy && !exporting && (
         <View pointerEvents="none" style={styles.savingPill}>
           <ActivityIndicator color="#fff" />
@@ -436,18 +446,6 @@ function RoundBtn({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  cameraWrap: {
-    position: 'absolute',
-    top: '12%',
-    bottom: '16%',
-    left: '2%',
-    right: '2%',
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.35)',
-    backgroundColor: '#000',
-  },
   ui: { flex: 1, justifyContent: 'space-between', padding: spacing.md },
   topCard: {
     backgroundColor: 'rgba(11,11,15,0.72)',

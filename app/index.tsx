@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
@@ -51,6 +52,14 @@ function ProjectCard({ project }: { project: Project }) {
 export default function HomeScreen() {
   const store = useProjects();
   const [newTitle, setNewTitle] = useState('');
+
+  if (!store.loaded) {
+    return (
+      <SafeAreaView style={[styles.container, styles.loading]}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </SafeAreaView>
+    );
+  }
 
   const create = () => {
     const title = newTitle.trim();
@@ -107,6 +116,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, padding: spacing.lg },
+  loading: { justifyContent: 'center', alignItems: 'center' },
   header: {
     flexDirection: 'row-reverse',
     alignItems: 'flex-start',

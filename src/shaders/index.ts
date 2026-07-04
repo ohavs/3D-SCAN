@@ -60,7 +60,7 @@ void main() {
 
   if (up < 0.0 || up > 1.0 || vp < 0.0 || vp > 1.0) { gl_FragColor = prev; return; }
 
-  // Feather toward the photo edges so overlaps cross-fade.
+  // Feather toward the photo edges so seams cross-fade in a narrow band.
   float ex = min(up, 1.0 - up);
   float ey = min(vp, 1.0 - vp);
   float feather = smoothstep(0.0, uFeather, ex) * smoothstep(0.0, uFeather, ey);
@@ -69,12 +69,16 @@ void main() {
   vec3 fwd = -normalize(uRot[2]);
   float inc = max(dot(D, fwd), 0.0);
   float w = feather * pow(inc, uIncidencePow) * uGlobalWeight;
-  if (w <= 0.0) { gl_FragColor = prev; return; }
+  if (w <= 0.001) { gl_FragColor = prev; return; }
 
   vec3 photo = texture2D(uPhoto, vec2(up, vp)).rgb;
-  float newA = min(prev.a + w, 1.0);
-  vec3 newRgb = (prev.rgb * prev.a + photo * w) / max(newA, 1e-4);
-  gl_FragColor = vec4(newRgb, newA);
+
+  // Winner-takes-most mosaic: sensor-only alignment is a few degrees off between
+  // shots, so AVERAGING overlaps produces ghosting/blur. Instead the higher-weight
+  // photo wins, with a narrow crossfade band around equality to soften the seam.
+  if (prev.a <= 0.001) { gl_FragColor = vec4(photo, w); return; }
+  float t = clamp((w - prev.a) / 0.2 * 0.5 + 0.5, 0.0, 1.0);
+  gl_FragColor = vec4(mix(prev.rgb, photo, t), max(prev.a, w));
 }
 `;
 
@@ -86,17 +90,11 @@ uniform sampler2D uAccum;
 uniform mat3 uRot;     // camera->world for the live device orientation
 uniform float uTanU;   // tan(displayFovU/2)
 uniform float uTanV;   // tan(displayFovV/2)
-uniform float uMinWeight; // below this, show the empty canvas colour
+uniform float uMinWeight; // below this, fully transparent (live camera shows)
 uniform float uDim;       // dim painted regions slightly (0..1)
-uniform vec3 uFill;       // empty-canvas colour (dark)
-uniform float uGrid;      // 1 = draw the sphere wireframe on empty areas
+uniform float uOpaque;    // 1 = force opaque output (viewer mode)
 
 const float PI = 3.141592653589793;
-
-float gridLine(float coord, float cells) {
-  float d = abs(fract(coord * cells) - 0.5) / cells;
-  return 1.0 - smoothstep(0.0, 0.012, d);
-}
 
 void main() {
   // Screen pixel -> camera ray (camera looks down -Z).
@@ -109,16 +107,12 @@ void main() {
   vec2 uv = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
 
   vec4 acc = texture2D(uAccum, uv);
-  float painted = smoothstep(uMinWeight, uMinWeight + 0.25, acc.a);
-  vec3 rgb = mix(uFill, acc.rgb * (1.0 - uDim), painted);
-
-  if (uGrid > 0.5) {
-    // Sphere wireframe: meridians every 15°, parallels every 15°.
-    float g = max(gridLine(uv.x, 24.0), gridLine(uv.y, 12.0));
-    vec3 gridCol = vec3(0.22, 0.25, 0.33);
-    rgb = mix(rgb, gridCol, g * (1.0 - painted) * 0.85);
-  }
-  gl_FragColor = vec4(rgb, 1.0);
+  float a = smoothstep(uMinWeight, uMinWeight + 0.2, acc.a);
+  a = max(a, uOpaque);
+  vec3 rgb = acc.rgb * (1.0 - uDim);
+  // Premultiplied alpha: Android TextureView composites the GL layer over the
+  // live camera assuming premultiplied colour. Unpainted -> transparent.
+  gl_FragColor = vec4(rgb * a, a);
 }
 `;
 

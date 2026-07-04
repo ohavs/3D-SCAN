@@ -19,6 +19,8 @@ interface Props {
   uri: string;
   style?: ViewStyle;
   fovDeg?: number;
+  /** Called once the first frame has been rendered (texture decoded + drawn). */
+  onReady?: () => void;
 }
 
 const PITCH_LIMIT = (85 * Math.PI) / 180;
@@ -28,11 +30,12 @@ const PITCH_LIMIT = (85 * Math.PI) / 180;
  * display shader, sampling the loaded JPEG as an opaque sphere — a quick sanity
  * check that the panorama renders correctly before export, no SVG/three needed.
  */
-export function PanoViewer({ uri, style, fovDeg = 75 }: Props) {
+export function PanoViewer({ uri, style, fovDeg = 75, onReady }: Props) {
   const yaw = useRef(Math.PI); // start facing the panorama front (lon=0)
   const pitch = useRef(0);
   const start = useRef({ yaw: Math.PI, pitch: 0 });
   const rafRef = useRef<number | null>(null);
+  const readySignalled = useRef(false);
 
   const pan = useRef(
     PanResponder.create({
@@ -91,15 +94,18 @@ export function PanoViewer({ uri, style, fovDeg = 75 }: Props) {
         gl.uniform1f(gl.getUniformLocation(program, 'uTanV'), tanV);
         gl.uniform1f(gl.getUniformLocation(program, 'uMinWeight'), 0);
         gl.uniform1f(gl.getUniformLocation(program, 'uDim'), 0);
-        gl.uniform3f(gl.getUniformLocation(program, 'uFill'), 0, 0, 0);
-        gl.uniform1f(gl.getUniformLocation(program, 'uGrid'), 0);
+        gl.uniform1f(gl.getUniformLocation(program, 'uOpaque'), 1);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.endFrameEXP();
+        if (!readySignalled.current) {
+          readySignalled.current = true;
+          onReady?.();
+        }
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
     },
-    [uri, fovDeg],
+    [uri, fovDeg, onReady],
   );
 
   return (
